@@ -61,7 +61,7 @@ jobs:
       with:
         tag_name: 'v1.0.0'  # Укажите версию для релиза
         release_name: 'Release v1.0.0'
-        body: 'Описание релиза'
+        body: '1.0'
         draft: false
         prerelease: false
 
