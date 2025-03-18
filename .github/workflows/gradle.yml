@@ -8,12 +8,10 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: write
-      artifacts: write
 
     steps:
     - uses: actions/checkout@v4
