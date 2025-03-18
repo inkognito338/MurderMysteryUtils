@@ -1,0 +1,55 @@
+{
+  "categoryX": 178,
+  "categoryY": 112,
+  "settings": [
+    {
+      "name": "MURDERER_ESP",
+      "value": true
+    },
+    {
+      "name": "DETECTIVE_ESP",
+      "value": true
+    },
+    {
+      "name": "OTHER_ESP",
+      "value": true
+    },
+    {
+      "name": "RESET_ON_MESSAGES",
+      "value": true
+    },
+    {
+      "name": "INFO_GUI",
+      "value": true
+    },
+    {
+      "name": "SPRINT",
+      "value": true
+    },
+    {
+      "name": "GOLD_INGOT_ESP",
+      "value": true
+    },
+    {
+      "name": "BOW_ESP",
+      "value": true
+    },
+    {
+      "name": "NAME_TAGS",
+      "value": true
+    },
+    {
+      "name": "MURDERER_ITEM_SWORD",
+      "value": true
+    },
+    {
+      "name": "MURDERER_ITEM_SHEARS",
+      "value": false
+    }
+  ],
+  "resetMessages": [
+    "MurderMystery ▸ Перемещаем в следующую игру",
+    "Союз с убийцей не допускается!",
+    "MurderMystery ▸ Убийца получит нож через: 5 сек."
+  ]
+}
