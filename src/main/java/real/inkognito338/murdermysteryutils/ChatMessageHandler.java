@@ -6,6 +6,7 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 // by inkognito338 | forge 1.12.2 - 14.23.5.2860
 
+
 public class ChatMessageHandler {
 
     private final Minecraft mc;
