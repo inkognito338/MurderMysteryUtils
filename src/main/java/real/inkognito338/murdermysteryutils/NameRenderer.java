@@ -4,11 +4,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.client.renderer.entity.RenderPlayer;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import org.lwjgl.opengl.GL11;
 
 // by inkognito338 | forge 1.12.2 - 14.23.5.2860
 
@@ -69,7 +67,7 @@ public class NameRenderer {
         GlStateManager.disableDepth();
 
         // Рисуем имя с тенью
-        fontRenderer.drawStringWithShadow(name, -stringWidth / 2, 0, 0xFFFFFF);
+        fontRenderer.drawStringWithShadow(name, -stringWidth / 2f, 0, 0xFFFFFF);
 
         // Включаем глубину обратно
         GlStateManager.enableDepth();

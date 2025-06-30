@@ -8,13 +8,16 @@ public enum SettingsOption {
     DETECTIVE_ESP("Detective ESP"),
     OTHER_ESP("Other ESP"),
     //RESET_ON_MESSAGES("Reset on messages (not work)"),
-    INFO_GUI("Info GUI"),
+    INFO_HUD("Info HUD"),
     SPRINT("Sprint"),
     GOLD_INGOT_ESP("Gold Ingot ESP"),
     BOW_ESP("Bow ESP"),
     NAME_TAGS("NameTags"), // Включает/выключает отображение имён игроков
     MURDERER_ITEM_SWORD("Murderer Item (Iron Sword)"),  // Новый параметр для выбора железного меча
-    MURDERER_ITEM_SHEARS("Murderer Item (Shears)"); // Новый параметр для выбора ножниц
+    MURDERER_ITEM_SHEARS("Murderer Item (Shears)"), // Новый параметр для выбора ножниц
+    FLY("Fly"),
+    TRACERS("Tracers"),
+    SPAMMER("Spammer");
 
 
 

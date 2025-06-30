@@ -4,6 +4,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.renderer.GlStateManager;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,6 +17,7 @@ import java.util.List;
 
 public class SettingsGUI extends GuiScreen {
     private final Minecraft mc = Minecraft.getMinecraft();
+    private static final Logger LOGGER = LogManager.getLogger();
 
     // Позиция окна настроек (загружается из ConfigManager)
     private static int categoryX = ConfigManager.getCategoryX();
@@ -38,7 +43,7 @@ public class SettingsGUI extends GuiScreen {
     }
 
     @Override
-    protected void actionPerformed(GuiButton button) {
+    protected void actionPerformed(@Nonnull GuiButton button) {
         if (button instanceof FunctionButton) {
             FunctionButton functionButton = (FunctionButton) button;
             functionButton.toggle();
@@ -58,7 +63,12 @@ public class SettingsGUI extends GuiScreen {
 
         // Заголовок
         drawRect(categoryX, categoryY, categoryX + categoryWidth, categoryY + 20, 0xFF9933CC);
-        mc.fontRenderer.drawStringWithShadow("MurderMystery Utils", categoryX + (categoryWidth / 2) - (mc.fontRenderer.getStringWidth("MurderMystery Utils") / 2), categoryY + 6, 0xFFFFFF);
+        mc.fontRenderer.drawStringWithShadow(
+                "MurderMystery Utils",
+                categoryX + (categoryWidth / 2.0f) - (mc.fontRenderer.getStringWidth("MurderMystery Utils") / 2.0f),
+                categoryY + 6,
+                0xFFFFFF
+        );
 
         // Основной фон
         drawRect(categoryX, categoryY + 20, categoryX + categoryWidth, categoryY + categoryHeight, 0x99000000);
@@ -71,7 +81,7 @@ public class SettingsGUI extends GuiScreen {
         try {
             super.mouseClicked(mouseX, mouseY, mouseButton);
         } catch (IOException e) {
-            e.printStackTrace();
+            LOGGER.error("Exception occurred while handling mouse click", e);
         }
 
         if (mouseButton == 0 && isMouseOverCategory(mouseX, mouseY)) {
@@ -130,12 +140,13 @@ public class SettingsGUI extends GuiScreen {
         }
 
         @Override
-        public void drawButton(Minecraft mc, int mouseX, int mouseY, float partialTicks) {
+        public void drawButton(@Nonnull Minecraft mc, int mouseX, int mouseY, float partialTicks) {
             if (this.visible) {
                 int textColor = option.getValue() ? 0x00FF00 : 0xFFFFFF;
                 mc.fontRenderer.drawStringWithShadow(this.displayString, this.x + 5, this.y + 6, textColor);
             }
         }
+
 
         public void toggle() {
             option.toggle();

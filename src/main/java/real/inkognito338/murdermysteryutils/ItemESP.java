@@ -1,9 +1,7 @@
 package real.inkognito338.murdermysteryutils;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.entity.item.EntityItem;
 import net.minecraft.init.Items;
 import net.minecraft.util.math.AxisAlignedBB;
@@ -22,7 +20,6 @@ public class ItemESP {
 
     @SubscribeEvent
     public void onRenderWorldLast(RenderWorldLastEvent event) {
-        EntityPlayerSP player = mc.player;
         World world = mc.world;
 
         // Проверяем, включены ли ESP для золотых слитков или лука

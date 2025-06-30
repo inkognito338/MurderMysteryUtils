@@ -71,4 +71,13 @@ public class MurderMysteryTracker {
     public EntityPlayer getDetective() {
         return detective;
     }
+
+    public String getMurdererName() {
+        return murderer != null ? murderer.getName() : "Unknown";
+    }
+
+    public String getDetectiveName() {
+        return detective != null ? detective.getName() : "Unknown";
+    }
+
 }
