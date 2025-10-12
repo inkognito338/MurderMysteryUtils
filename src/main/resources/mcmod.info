@@ -1,0 +1,15 @@
+[
+  {
+    "modid": "murdermysteryutils",
+    "name": "MurderMystery Utils",
+    "description": "Мод MurderMystery Utils предоставляет несколько полезных функций для улучшения игрового процесса в Murder Mystery.",
+    "version": "${version}",
+    "mcversion": "1.12.2",
+    "updateUrl": "",
+    "authorList": ["inkognito338"],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]
