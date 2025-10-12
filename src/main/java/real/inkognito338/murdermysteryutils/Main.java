@@ -1,13 +1,15 @@
 package real.inkognito338.murdermysteryutils;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.settings.KeyBinding;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.event.FMLInitializationEvent;
-import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
+
 import java.io.File;
 
 // by inkognito338 | forge 1.12.2 - 14.23.5.2860
@@ -21,15 +23,24 @@ public class Main {
     private static final File CONFIG_DIR = new File(Minecraft.getMinecraft().mcDataDir, "MurderMysteryUtils");
     private static final File CONFIG_FILE = new File(CONFIG_DIR, "config.json");
 
+    // Создаём KeyBinding для открытия настроек
+    public static final KeyBinding OPEN_SETTINGS_KEY = new KeyBinding(
+            "key.murdermysteryutils.open_settings",
+            Keyboard.KEY_F6, // дефолтная клавиша
+            "key.categories.murdermysteryutils"
+    );
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
+        // Создание папки конфигурации
         if (!CONFIG_DIR.exists() && !CONFIG_DIR.mkdirs()) {
             System.err.println("Failed to create configuration directory: " + CONFIG_DIR.getAbsolutePath());
         }
 
-        ConfigManager.loadSettings();
+        // Регистрируем бинды клавиш
+        ClientRegistry.registerKeyBinding(OPEN_SETTINGS_KEY);
 
+        // Регистрируем события
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(new ESPRenderer());
         MinecraftForge.EVENT_BUS.register(new MurderMysteryTracker());
@@ -43,13 +54,13 @@ public class Main {
         MinecraftForge.EVENT_BUS.register(new ChatMessageHandler(Minecraft.getMinecraft(), new ESPRenderer()));
         MinecraftForge.EVENT_BUS.register(new Chams());
         MinecraftForge.EVENT_BUS.register(new CommandManager());
-//        MinecraftForge.EVENT_BUS.register(new NameTagBypass());
     }
 
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
-            if (Keyboard.isKeyDown(Keyboard.KEY_F6)) {
+            // Проверяем нажатие на зарегистрированную клавишу
+            if (OPEN_SETTINGS_KEY.isPressed()) {
                 Minecraft.getMinecraft().displayGuiScreen(new SettingsGUI());
             }
         }
@@ -59,4 +70,3 @@ public class Main {
         return CONFIG_FILE;
     }
 }
-
