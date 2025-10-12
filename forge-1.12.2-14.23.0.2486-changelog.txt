@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 Changelog:
+=======
+Changelog:
+>>>>>>> ac43d9de9ba8f618ce55bd2f968c785ecaf695a5
 Build 2486:
 	LexManos: MC 1.12.2 update.
 

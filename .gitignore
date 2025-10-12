@@ -5,7 +5,11 @@ bin
 .metadata
 .classpath
 .project
+<<<<<<< HEAD
 build/
+=======
+
+>>>>>>> ac43d9de9ba8f618ce55bd2f968c785ecaf695a5
 # idea
 out
 *.ipr
