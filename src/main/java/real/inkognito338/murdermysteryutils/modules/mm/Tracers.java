@@ -1,4 +1,4 @@
-package real.inkognito338.murdermysteryutils;
+package real.inkognito338.murdermysteryutils.modules.mm;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
@@ -6,19 +6,37 @@ import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.math.Vec3d;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lwjgl.opengl.GL11;
+import real.inkognito338.murdermysteryutils.modules.Module;
 
-public class Tracers {
+public class Tracers extends Module {
     private static final Logger LOGGER = LogManager.getLogger();
     private final Minecraft mc = Minecraft.getMinecraft();
+
+    public Tracers() {
+        super("Tracers");
+    }
+
+    @Override
+    public void onEnable() {
+        super.onEnable();
+        MinecraftForge.EVENT_BUS.register(this);
+    }
+
+    @Override
+    public void onDisable() {
+        super.onDisable();
+        MinecraftForge.EVENT_BUS.unregister(this);
+    }
 
     @SubscribeEvent
     public void render(RenderWorldLastEvent event) {
         try {
-            if (!SettingsOption.TRACERS.getValue() || mc.getRenderManager().options == null) {
+            if (!this.isToggled() || mc.getRenderManager().options == null) {
                 return;
             }
 

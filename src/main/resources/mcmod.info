@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 [
   {
     "modid": "murdermysteryutils",
@@ -14,20 +14,3 @@
     "dependencies": []
   }
 ]
-=======
-[
-  {
-    "modid": "murdermysteryutils",
-    "name": "Murder Mystery Utils",
-    "description": "Мод MurderMystery Utils предоставляет несколько полезных функций для улучшения игрового процесса в Murder Mystery.",
-    "version": "${version}",
-    "mcversion": "1.12.2",
-    "updateUrl": "",
-    "authorList": ["inkognito338"],
-    "credits": "",
-    "logoFile": "",
-    "screenshots": [],
-    "dependencies": []
-  }
-]
->>>>>>> ac43d9de9ba8f618ce55bd2f968c785ecaf695a5

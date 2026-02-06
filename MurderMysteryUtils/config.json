@@ -1,55 +1,165 @@
 {
-  "categoryX": 178,
-  "categoryY": 112,
-  "settings": [
-    {
-      "name": "MURDERER_ESP",
-      "value": true
+  "categoryX": 230,
+  "categoryY": 94,
+  "modules": {
+    "AntiBlind": {
+      "enabled": true,
+      "settings": {}
     },
-    {
-      "name": "DETECTIVE_ESP",
-      "value": true
+    "AutoNext": {
+      "enabled": false,
+      "settings": {
+        "OnInnocent": true,
+        "OnDetective": false,
+        "OnMurderer": false,
+        "AutoConfirm": true,
+        "Delay": 1.16,
+        "AutoNextGameEnd": true
+      }
     },
-    {
-      "name": "OTHER_ESP",
-      "value": true
+    "AutoRoleAnnounce": {
+      "enabled": false,
+      "settings": {
+        "AnnounceInnocent": false,
+        "AnnounceDetective": true,
+        "AnnounceMurderer": true
+      }
     },
-    {
-      "name": "RESET_ON_MESSAGES",
-      "value": true
+    "BarrierVision": {
+      "enabled": true,
+      "settings": {}
     },
-    {
-      "name": "INFO_GUI",
-      "value": true
+    "BowESP": {
+      "enabled": false,
+      "settings": {
+        "Mode": "Dropped",
+        "Distance": 542.99,
+        "BoxSize": 52.08,
+        "Color": [
+          1.0,
+          0.6039216,
+          0.0
+        ],
+        "Alpha": 134.17,
+        "Outline": true
+      }
     },
-    {
-      "name": "SPRINT",
-      "value": true
+    "CustomTime": {
+      "enabled": true,
+      "settings": {
+        "Time": 12454.85
+      }
     },
-    {
-      "name": "GOLD_INGOT_ESP",
-      "value": true
+    "CustomWeather": {
+      "enabled": true,
+      "settings": {
+        "Weather": "Clear",
+        "Strength": 1.0,
+        "Rain": true,
+        "Thunder": true
+      }
     },
-    {
-      "name": "BOW_ESP",
-      "value": true
+    "ESP": {
+      "enabled": true,
+      "settings": {
+        "Show Mode": "All Roles",
+        "ESP Fade": false,
+        "Line Width": 2.59,
+        "Mode": "Outline",
+        "Through Walls": true,
+        "NPC ESP": true,
+        "Filter NPC": true,
+        "Check Size": true,
+        "Check Tab Info": true,
+        "Murderer Color": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "Detective Color": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "Innocent Color": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "NPC Color": [
+          0.3,
+          0.8,
+          1.0
+        ]
+      }
     },
-    {
-      "name": "NAME_TAGS",
-      "value": true
+    "FakeGM1": {
+      "enabled": true,
+      "settings": {}
     },
-    {
-      "name": "MURDERER_ITEM_SWORD",
-      "value": true
+    "FlowerPotESP": {
+      "enabled": false,
+      "settings": {
+        "Mode": "All",
+        "Distance": 268.21,
+        "BoxSize": 2.34,
+        "Color": [
+          0.84313726,
+          0.2627451,
+          0.89411765
+        ],
+        "Alpha": 128.24,
+        "Outline": true
+      }
     },
-    {
-      "name": "MURDERER_ITEM_SHEARS",
-      "value": false
+    "Fly": {
+      "enabled": false,
+      "settings": {}
+    },
+    "HUD": {
+      "enabled": true,
+      "settings": {
+        "Show Distance": true
+      }
+    },
+    "ItemESP": {
+      "enabled": true,
+      "settings": {}
+    },
+    "NameTags": {
+      "enabled": true,
+      "settings": {}
+    },
+    "ShowNames": {
+      "enabled": false,
+      "settings": {}
+    },
+    "Spammer": {
+      "enabled": false,
+      "settings": {
+        "Delay": 3.46
+      }
+    },
+    "Sprint": {
+      "enabled": true,
+      "settings": {
+        "Mode": "Forward",
+        "KeepSprint": true,
+        "StopInWater": true,
+        "StopInLava": true,
+        "StopWhenHungry": false,
+        "HungerLimit": 3.0,
+        "StopWhenBlocked": true,
+        "StopWhenSneaking": true,
+        "StopWhenElytra": true,
+        "SprintBoost": 1.0,
+        "CombatMode": false
+      }
+    },
+    "Tracers": {
+      "enabled": false,
+      "settings": {}
     }
-  ],
-  "resetMessages": [
-    "MurderMystery ▸ Перемещаем в следующую игру",
-    "Союз с убийцей не допускается!",
-    "MurderMystery ▸ Убийца получит нож через: 5 сек."
-  ]
+  },
+  "resetMessages": []
 }

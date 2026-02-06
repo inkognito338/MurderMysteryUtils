@@ -1,4 +1,4 @@
-package real.inkognito338.murdermysteryutils;
+package real.inkognito338.murdermysteryutils.modules.mm;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
@@ -7,27 +7,40 @@ import net.minecraft.init.Items;
 import net.minecraft.util.math.AxisAlignedBB;
 import net.minecraft.world.World;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import org.lwjgl.opengl.GL11;
+import real.inkognito338.murdermysteryutils.modules.Module;
 
 import java.util.List;
 
-// by inkognito338 | forge 1.12.2 - 14.23.5.2860
-
-public class ItemESP {
-
+public class ItemESP extends Module {
     private final Minecraft mc = Minecraft.getMinecraft();
+
+    public ItemESP() {
+        super("ItemESP");
+    }
+
+    @Override
+    public void onEnable() {
+        super.onEnable();
+        MinecraftForge.EVENT_BUS.register(this);
+    }
+
+    @Override
+    public void onDisable() {
+        super.onDisable();
+        MinecraftForge.EVENT_BUS.unregister(this);
+    }
 
     @SubscribeEvent
     public void onRenderWorldLast(RenderWorldLastEvent event) {
-        if (mc.world == null || mc.player == null) return;
+        if (!this.isToggled() || mc.world == null || mc.player == null) return;
 
         World world = mc.world;
 
-        // Проверяем, включены ли ESP для золотых слитков или лука
-        if (!SettingsOption.GOLD_INGOT_ESP.getValue() && !SettingsOption.BOW_ESP.getValue()) return;
-
         GlStateManager.pushMatrix();
+        GlStateManager.pushAttrib(); // Сохраняем все атрибуты OpenGL
 
         GlStateManager.disableTexture2D();
         GlStateManager.enableBlend();
@@ -47,13 +60,17 @@ public class ItemESP {
 
             AxisAlignedBB bb = itemEntity.getEntityBoundingBox();
 
-            if (itemEntity.getItem().getItem() == Items.GOLD_INGOT && SettingsOption.GOLD_INGOT_ESP.getValue()) {
-                renderItemBoundingBox(bb, 1.0F, 1.0F, 0.0F); // Желтый
-            } else if (itemEntity.getItem().getItem() == Items.BOW && SettingsOption.BOW_ESP.getValue()) {
-                renderItemBoundingBox(bb, 0.6F, 0.3F, 0.1F); // Коричневый
+            if (itemEntity.getItem().getItem() == Items.GOLD_INGOT) {
+                renderItemBoundingBox(bb, 1.0F, 1.0F, 0.0F); // Желтый для золотых слитков
+            } else if (itemEntity.getItem().getItem() == Items.BOW) {
+                renderItemBoundingBox(bb, 0.6F, 0.3F, 0.1F); // Коричневый для луков
             }
         }
 
+        // ВАЖНО: Сбрасываем цвет перед восстановлением состояния
+        GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+
+        // Восстанавливаем параметры OpenGL
         GL11.glEnable(GL11.GL_DEPTH_TEST);
         GL11.glDepthMask(true);
         GlStateManager.enableCull();
@@ -61,13 +78,13 @@ public class ItemESP {
         GlStateManager.enableTexture2D();
         GlStateManager.disableBlend();
 
-        GL11.glColor4f(1F, 1F, 1F, 1F);
-
+        GlStateManager.popAttrib(); // Восстанавливаем все атрибуты OpenGL
         GlStateManager.popMatrix();
     }
 
     private void renderItemBoundingBox(AxisAlignedBB bb, float r, float g, float b) {
-        GL11.glColor4f(r, g, b, 1.0F);
+        // Используем GlStateManager для установки цвета
+        GlStateManager.color(r, g, b, 1.0F);
 
         double minX = bb.minX - 0.05;
         double minY = bb.minY - 0.05;
@@ -101,6 +118,9 @@ public class ItemESP {
         drawLine(minX, minY, maxZ, minX, maxY, maxZ, px, py, pz);
 
         GL11.glEnd();
+
+        // Сбрасываем цвет после рисования
+        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
     }
 
     private void drawLine(double x1, double y1, double z1, double x2, double y2, double z2,

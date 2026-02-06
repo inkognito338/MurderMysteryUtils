@@ -1,4 +1,4 @@
-package real.inkognito338.murdermysteryutils;
+package real.inkognito338.murdermysteryutils.modules.mm;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -13,13 +13,19 @@ import java.util.regex.Pattern;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.network.NetworkPlayerInfo;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import real.inkognito338.murdermysteryutils.Main;
+import real.inkognito338.murdermysteryutils.modules.Module;
+import real.inkognito338.murdermysteryutils.modules.settings.Setting;
+import real.inkognito338.murdermysteryutils.modules.settings.SettingType;
 
-public class Spammer {
+@SuppressWarnings("SpellCheckingInspection")
+public class Spammer extends Module {
 
     private static final Logger LOGGER = LogManager.getLogger();
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -28,18 +34,37 @@ public class Spammer {
     private final Pattern VALID_NAME = Pattern.compile("^[a-zA-Z0-9_]{3,16}$");
 
     private int tickDelay = 0;
+    private Setting delaySetting;
 
     // Список для текущей очереди сообщений
     private final List<String> queue = new ArrayList<>();
 
     public Spammer() {
+        super("Spammer");
         loadMessages();
         shuffleQueue();
+        initSettings();
+    }
+
+    private void initSettings() {
+        // Добавляем настройку задержки в секундах
+        delaySetting = new Setting("Delay", SettingType.NUMBER, 3.0, 0.5, 30.0);
+        addSetting(delaySetting);
+    }
+
+    @Override
+    public void onEnable() {
+        MinecraftForge.EVENT_BUS.register(this);
+    }
+
+    @Override
+    public void onDisable() {
+        MinecraftForge.EVENT_BUS.unregister(this);
     }
 
     @SubscribeEvent
     public void onTick(TickEvent.ClientTickEvent event) {
-        if (!SettingsOption.SPAMMER.getValue() || mc.player == null || mc.world == null)
+        if (mc.player == null || mc.world == null)
             return;
 
         if (tickDelay > 0) {
@@ -56,7 +81,9 @@ public class Spammer {
 
         if (raw != null) {
             mc.player.sendChatMessage(raw);
-            this.tickDelay = 120 + random.nextInt(21);
+            double delaySeconds = ((Number) delaySetting.getValue()).doubleValue();
+            int baseTicks = (int)(delaySeconds * 20); // 20 тиков в секунду
+            this.tickDelay = baseTicks + random.nextInt(21); // Добавляем случайность
         }
     }
 

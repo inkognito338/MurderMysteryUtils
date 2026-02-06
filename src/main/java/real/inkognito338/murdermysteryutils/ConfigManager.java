@@ -1,6 +1,10 @@
 package real.inkognito338.murdermysteryutils;
 
 import com.google.gson.*;
+import real.inkognito338.murdermysteryutils.modules.Module;
+import real.inkognito338.murdermysteryutils.modules.ModuleManager;
+import real.inkognito338.murdermysteryutils.modules.settings.Setting;
+import real.inkognito338.murdermysteryutils.modules.settings.SettingType;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -9,44 +13,73 @@ import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+@SuppressWarnings("SpellCheckingInspection")
 public class ConfigManager {
     private static final Logger LOGGER = Logger.getLogger(ConfigManager.class.getName());
-
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static int categoryX = 100;
     private static int categoryY = 100;
     private static final Set<String> resetMessages = new HashSet<>();
-
     private static final File SPAM_FILE = new File(Main.getConfigFile().getParentFile(), "spam.txt");
 
-    static {
-        loadSettings();
+    private static boolean initialized = false;
+
+    public static void init() {
+        if (initialized) return;
+        initialized = true;
+
         createSpamFileIfNeeded();
+        // Загружаем настройки при инициализации, если модули уже зарегистрированы
+        if (!ModuleManager.getModules().isEmpty()) {
+            loadSettings();
+        }
     }
 
-    public static void saveSettings(int x, int y, Set<String> messages) {
-        categoryX = x;
-        categoryY = y;
-
-        resetMessages.clear();
-        if (messages != null) {
-            resetMessages.addAll(messages);
-        }
-
+    public static void save() {
         JsonObject json = new JsonObject();
         json.addProperty("categoryX", categoryX);
         json.addProperty("categoryY", categoryY);
 
-        JsonArray settingsArray = new JsonArray();
-        for (SettingsOption option : SettingsOption.values()) {
-            JsonObject setting = new JsonObject();
-            setting.addProperty("name", option.name());
-            setting.addProperty("value", option.getValue());
-            settingsArray.add(setting);
-        }
-        json.add("settings", settingsArray);
+        // Сохраняем состояния модулей
+        JsonObject modulesObj = new JsonObject();
+        for (Module module : ModuleManager.getModules()) {
+            JsonObject moduleObj = new JsonObject();
+            moduleObj.addProperty("enabled", module.isToggled());
 
+            // Сохраняем настройки модуля
+            JsonObject settingsObj = new JsonObject();
+            for (Setting setting : module.getSettings()) {
+                Object value = setting.getValue();
+                if (value instanceof Boolean) {
+                    settingsObj.addProperty(setting.getName(), (Boolean) value);
+                } else if (value instanceof Number) {
+                    // Преобразуем Number в Double для сохранения
+                    if (value instanceof Float) {
+                        settingsObj.addProperty(setting.getName(), ((Float) value).doubleValue());
+                    } else if (value instanceof Double) {
+                        settingsObj.addProperty(setting.getName(), (Double) value);
+                    } else if (value instanceof Integer) {
+                        settingsObj.addProperty(setting.getName(), ((Integer) value).doubleValue());
+                    }
+                } else if (value instanceof String) {
+                    settingsObj.addProperty(setting.getName(), (String) value);
+                } else if (value instanceof float[]) {
+                    // Сохраняем COLOR настройки как массив
+                    float[] color = (float[]) value;
+                    JsonArray colorArray = new JsonArray();
+                    colorArray.add(new JsonPrimitive(color[0]));
+                    colorArray.add(new JsonPrimitive(color[1]));
+                    colorArray.add(new JsonPrimitive(color[2]));
+                    settingsObj.add(setting.getName(), colorArray);
+                }
+            }
+            moduleObj.add("settings", settingsObj);
+            modulesObj.add(module.getName(), moduleObj);
+        }
+        json.add("modules", modulesObj);
+
+        // Сохраняем resetMessages
         JsonArray messageArray = new JsonArray();
         resetMessages.forEach(msg -> messageArray.add(new JsonPrimitive(msg)));
         json.add("resetMessages", messageArray);
@@ -59,31 +92,90 @@ public class ConfigManager {
     }
 
     public static void loadSettings() {
+        init(); // Инициализируем при первой загрузке
+
         File configFile = Main.getConfigFile();
-        if (!configFile.exists()) return;
+        if (!configFile.exists()) {
+            save(); // Создаем файл с настройками по умолчанию
+            return;
+        }
 
         try (Reader reader = new FileReader(configFile)) {
             JsonObject json = GSON.fromJson(reader, JsonObject.class);
-            if (json == null) return;
+            if (json == null) {
+                save(); // Создаем новый конфиг если файл пустой
+                return;
+            }
 
             categoryX = json.has("categoryX") ? json.get("categoryX").getAsInt() : categoryX;
             categoryY = json.has("categoryY") ? json.get("categoryY").getAsInt() : categoryY;
 
-            if (json.has("settings")) {
-                for (JsonElement el : json.getAsJsonArray("settings")) {
-                    JsonObject setting = el.getAsJsonObject();
-                    String name = setting.get("name").getAsString();
-                    boolean value = setting.get("value").getAsBoolean();
+            // Загружаем состояния модулей
+            if (json.has("modules")) {
+                JsonObject modulesObj = json.getAsJsonObject("modules");
+                for (Module module : ModuleManager.getModules()) {
+                    if (modulesObj.has(module.getName())) {
+                        JsonObject moduleObj = modulesObj.getAsJsonObject(module.getName());
 
-                    Arrays.stream(SettingsOption.values())
-                            .filter(opt -> opt.name().equals(name))
-                            .findFirst()
-                            .ifPresent(opt -> opt.setValue(value));
+                        // Загружаем состояние включения/выключения
+                        if (moduleObj.has("enabled")) {
+                            boolean enabled = moduleObj.get("enabled").getAsBoolean();
+                            module.setToggled(enabled);
+                        }
+
+                        // Загружаем настройки модуля
+                        if (moduleObj.has("settings")) {
+                            JsonObject settingsObj = moduleObj.getAsJsonObject("settings");
+                            for (Setting setting : module.getSettings()) {
+                                if (settingsObj.has(setting.getName())) {
+                                    JsonElement element = settingsObj.get(setting.getName());
+                                    Object value = null;
+
+                                    switch (setting.getType()) {
+                                        case BOOLEAN:
+                                            value = element.getAsBoolean();
+                                            break;
+                                        case NUMBER:
+                                            value = element.getAsDouble();
+                                            break;
+                                        case MODE:
+                                            value = element.getAsString();
+                                            break;
+                                        case COLOR:
+                                            if (element.isJsonArray()) {
+                                                JsonArray colorArray = element.getAsJsonArray();
+                                                if (colorArray.size() >= 3) {
+                                                    value = new float[]{
+                                                            colorArray.get(0).getAsFloat(),
+                                                            colorArray.get(1).getAsFloat(),
+                                                            colorArray.get(2).getAsFloat()
+                                                    };
+                                                }
+                                            } else if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                                                // Совместимость со старым форматом - используем значение по умолчанию
+                                                value = setting.getDefaultValue();
+                                            }
+                                            break;
+                                    }
+
+                                    if (value != null) {
+                                        try {
+                                            setting.setValue(value);
+                                        } catch (Exception e) {
+                                            LOGGER.log(Level.WARNING, "Failed to set value for setting " +
+                                                    setting.getName() + " in module " + module.getName(), e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            resetMessages.clear();
+            // Загружаем resetMessages
             if (json.has("resetMessages")) {
+                resetMessages.clear();
                 for (JsonElement el : json.getAsJsonArray("resetMessages")) {
                     resetMessages.add(el.getAsString());
                 }
@@ -91,6 +183,8 @@ public class ConfigManager {
 
         } catch (IOException | JsonSyntaxException e) {
             LOGGER.log(Level.SEVERE, "Failed to load config settings", e);
+            // Если файл поврежден, создаем новый с настройками по умолчанию
+            save();
         }
     }
 
@@ -164,15 +258,15 @@ public class ConfigManager {
         return categoryY;
     }
 
-    public static Set<String> getResetMessages() {
-        return new HashSet<>(resetMessages);
+    // Setter для позиции категории
+    public static void setCategoryPosition(int x, int y) {
+        categoryX = x;
+        categoryY = y;
+        save();
     }
 
-    public static void setResetMessages(Set<String> messages) {
-        resetMessages.clear();
-        if (messages != null) {
-            resetMessages.addAll(messages);
-        }
-        saveSettings(categoryX, categoryY, resetMessages);
+    // Метод для ручной загрузки настроек (если нужно перезагрузить)
+    public static void reloadSettings() {
+        loadSettings();
     }
 }
