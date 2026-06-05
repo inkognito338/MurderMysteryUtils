@@ -9,6 +9,7 @@
     "1.1.0": "Optimizations.\nInfoGUI replaced with Info HUD.\nAdded Fly, Tracers, Spammer (spam.txt with {player}, {player2} support).",
     "1.2.0": "Fixed yellow hand bug with ItemESP enabled.\nImproved Spammer.\nSprint now bypasses anticheat detection.\nAdded Chams module (experimental).\nAdded keybinds via Settings > Controls (default F6).\nAdded .gm 0/1/2/3 chat command for fake gamemode.",
     "2.0.0": "New GUI menu design.\nOptimizations and code cleanup.\nFixed ESP.\nImproved many modules.\nAdded: AntiBlind, AutoNext, AutoRoleAnnounce, BarrierVision, CustomTime, CustomWeather, FakeGM1.",
+    "2.1.0": "version 2.1.0",
     "2.1.1": "test"
   }
 }
