@@ -1,0 +1,81 @@
+{
+  "updater": {
+    "enabled": true,
+    "latest_version": "2.1.1",
+    "recommended_version": "2.1.0",
+    "download_url": "https://github.com/inkognito338/MurderMysteryUtils/releases/latest",
+    "versions": {
+      "1.0.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "Initial release.",
+          "ru": "Первый релиз."
+        }
+      },
+      "1.1.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "Optimizations. InfoGUI replaced with Info HUD. Added Fly, Tracers, Spammer.",
+          "ru": "Оптимизации. InfoGUI заменён на Info HUD. Добавлены: Fly, Tracers, Spammer."
+        }
+      },
+      "1.2.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "Fixed yellow hand bug. Improved Spammer. Sprint bypass. Added Chams module. Added keybinds F6. Added .gm command.",
+          "ru": "Исправлен баг с жёлтой рукой. Улучшен Spammer. Sprint обходит античит. Добавлен модуль Chams. Добавлены клавиши F6. Добавлена команда .gm."
+        }
+      },
+      "2.0.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "New GUI menu design. Optimizations and code cleanup. Fixed ESP. Improved many modules.",
+          "ru": "Новый дизайн GUI меню. Оптимизации и чистка кода. Исправлен ESP. Улучшены многие модули."
+        }
+      },
+      "2.1.0": {
+        "status": "recommended",
+        "changelog": {
+          "en": "New GUI menu design. Optimizations and code cleanup. Fixed ESP. Improved many modules. Added: AntiBlind, AutoNext, AutoRoleAnnounce, BarrierVision, CustomTime, CustomWeather, FakeGM1.",
+          "ru": "Новый дизайн GUI меню. Оптимизации и чистка кода. Исправлен ESP. Улучшены многие модули. Добавлены: AntiBlind, AutoNext, AutoRoleAnnounce, BarrierVision, CustomTime, CustomWeather, FakeGM1."
+        }
+      },
+      "2.1.1": {
+        "status": "latest",
+        "changelog": {
+          "en": "test",
+          "ru": "тест"
+        }
+      }
+    }
+  },
+  "author": {
+    "name": "inkognito338",
+    "github": "https://github.com/inkognito338",
+    "discord": "inkognito338"
+  },
+  "messages": {
+    "announcements": {
+      "en": [
+        "&a[MurderMysteryUtils] &fJoin our Discord: &bhttps://discord.com/invite/23ZmQPBbS2",
+        "&a[MurderMysteryUtils] &fGitHub: &nhttps://github.com/inkognito338/MurderMysteryUtils"
+      ],
+      "ru": [
+        "&a[MurderMysteryUtils] &fПрисоединяйся к нашему Discord: &bhttps://discord.com/invite/23ZmQPBbS2",
+        "&a[MurderMysteryUtils] &fGitHub: &nhttps://github.com/inkognito338/MurderMysteryUtils"
+      ]
+    },
+    "update_message": {
+      "en": "&a[MurderMysteryUtils] &fNew version &e{latest} &favailable! You have &7{current}&f. Download: &n{download_url}",
+      "ru": "&a[MurderMysteryUtils] &fДоступна новая версия &e{latest}&f! У вас &7{current}&f. Скачать: &n{download_url}"
+    },
+    "uptodate_message": {
+      "en": "&a[MurderMysteryUtils] &fYou are using the latest version &e{current}&f!",
+      "ru": "&a[MurderMysteryUtils] &fВы используете последнюю версию &e{current}&f!"
+    },
+    "recommended_message": {
+      "en": "&a[MurderMysteryUtils] &fRecommended version: &e{recommended}&f. You have &7{current}",
+      "ru": "&a[MurderMysteryUtils] &fРекомендуемая версия: &e{recommended}&f. У вас &7{current}"
+    }
+  }
+}
