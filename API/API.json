@@ -48,23 +48,17 @@
     "discord": "inkognito338"
   },
   "messages": {
-    "announcements": {
-      "en": [
-        "&7[&6MurderMysteryUtils&6] &fJoin our Discord: &bhttps://discord.com/invite/23ZmQPBbS2",
-        "&7[&6MurderMysteryUtils&6] &fGitHub: &nhttps://github.com/inkognito338/MurderMysteryUtils"
-      ],
-      "ru": [
-        "&7[&6MurderMysteryUtils&6] &fПрисоединяйся к нашему Discord: &bhttps://discord.com/invite/23ZmQPBbS2",
-        "&7[&6MurderMysteryUtils&6] &fGitHub: &nhttps://github.com/inkognito338/MurderMysteryUtils"
-      ]
-    },
     "update_message": {
       "en": "&7[&6MurderMysteryUtils&6] &fNew version &e{latest} &favailable! You have &7{current}&f. Download: &2{download_url}",
       "ru": "&7[&6MurderMysteryUtils&6] &fДоступна новая версия &e{latest}&f! У вас &7{current}&f. Скачать: &2{download_url}"
     },
     "uptodate_message": {
-      "en": "&7[&6MurderMysteryUtils&6] &fYou are using the latest version &e{current}&f!",
-      "ru": "&7[&6MurderMysteryUtils&6] &fВы используете последнюю версию &e{current}&f!"
+      "en": [
+        "&7[&6MurderMysteryUtils&7] &fThank you for installing and using the mod! You're also welcome to join a Discord server run by a friend of the mod author. Please note that this server is not affiliated with, endorsed by, or related to the mod in any way: &bhttps://dsc.gg/skvlink"
+      ],
+      "ru": [
+        "&7[&6MurderMysteryUtils&7] &fСпасибо, что установили и используете мод! Вы также можете присоединиться к Discord-серверу друга автора мода. Обратите внимание: этот сервер никак не связан с модом, его разработкой или поддержкой: &bhttps://dsc.gg/skvlink"
+      ]
     },
     "recommended_message": {
       "en": "&7[&6MurderMysteryUtils&6] &fRecommended version: &e{recommended}&f. You have &7{current}",
