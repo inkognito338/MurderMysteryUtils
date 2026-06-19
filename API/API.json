@@ -1,0 +1,66 @@
+{
+  "user_experience": {
+    "enabled": true,
+    "users": {
+      "inkognito338": {
+        "role": "Dev",
+        "display": {
+          "prefix": "&3",
+          "tab_color": "&3"
+        },
+        "servers": [
+          "*"
+        ]
+      },
+      "ruinquie": {
+        "role": "Sponsor",
+        "display": {
+          "tab_color": "&6"
+        },
+        "modules": {
+          "FakeGM1": false,
+          "MurderAlert": 35,
+          "AutoNext": 10
+        },
+        "servers": [
+          "*"
+        ]
+      },
+      "_zxcursed_zxc_": {
+        "role": "Sponsor",
+        "display": {
+          "tab_color": "&b"
+        },
+        "modules": {
+          "FakeGM1": false,
+          "MurderAlert": 35,
+          "AutoNext": 10
+        },
+        "servers": [
+          "*"
+        ]
+      }
+    },
+    "groups": [
+      {
+        "name": "Sponsor2",
+        "users": [
+          "zxcursed1234571"
+        ],
+        "servers": [
+          "dexland",
+          "masedworld",
+          "mineblaze",
+          "cheatmine",
+          "mineberry",
+          "minepeak"
+        ],
+        "modules": {
+          "FakeGM1": false,
+          "MurderAlert": 35,
+          "AutoNext": 10
+        }
+      }
+    ]
+  }
+}
