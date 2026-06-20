@@ -4,6 +4,9 @@
 // ============================================================
 
 
+
+
+
 var users = {
     "inkognito338": {
         color: "&3",
@@ -23,7 +26,7 @@ var users = {
         color: "&b",
         prefix: "&b",
         suffix: "",
-        servers: "*",
+        servers: ["*"],
         optimization: 2,
         modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
     },
