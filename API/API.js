@@ -265,37 +265,19 @@ function getNameColor(name, team, prefix, suffix, ip) {
     return "&7";
 }
 
-// ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
-// ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
     var user = users[playerNameLower];
     
     if (!user || !user.color) return null;
     if (!matchServer(user.servers, serverIP)) return null;
     
-    // Проверяем team
     var color = getNameColor(playerName, teamName, prefix, suffix, serverIP);
     if (!color || color === "&7") return null;
     
     color = color.replace("&", "§");
     
-    // playerName уже чистый ник - просто заменяем его в строке!
-    // Убираем все форматные коды из originalFormattedName
-    var cleanOriginal = originalFormattedName.replace(/§[0-9a-fk-or]/g, "");
-    
-    // Находим позицию ника в очищенной строке
-    var nameIndex = cleanOriginal.indexOf(playerName);
-    if (nameIndex < 0) return null;
-    
-    // Собираем результат:
-    // 1. Всё до ника из ОРИГИНАЛЬНОЙ строки (сохраняем префиксы)
-    // 2. Наш цвет
-    // 3. Чистый ник
-    // 4. Всё после ника из ОРИГИНАЛЬНОЙ строки (сохраняем суффиксы)
-    return originalFormattedName.substring(0, nameIndex) + 
-           color + 
-           playerName + 
-           originalFormattedName.substring(nameIndex + playerName.length);
+    // Просто собираем: префикс + цвет + чистый ник + суффикс
+    return prefix + color + playerName + suffix;
 }
 
 // Header/Footer поддержка (задел на будущее, пока не используется)
