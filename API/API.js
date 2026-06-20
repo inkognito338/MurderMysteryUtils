@@ -267,41 +267,28 @@ function getNameColor(name, team, prefix, suffix, ip) {
 
 // ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
+    var user = users[playerNameLower];
     
-    // Используем уже готовые функции которые проверяют всё!
-    var color = getNameColor(playerName, teamName, prefix, suffix, serverIP);
-    var newPrefix = getPrefix(playerName, teamName, prefix, serverIP);
-    var newSuffix = getSuffix(playerName, teamName, suffix, serverIP);
+    // ТОЛЬКО если пользователь есть в API
+    if (!user || !user.color) return null;
+    if (!matchServer(user.servers, serverIP)) return null;
     
-    // Если ничего не меняем - не трогаем
-    if (!color && !newPrefix && !newSuffix) return null;
-    
-    // Если цвет не задан или &7 - не трогаем
-    if (!color || color === "&7") return null;
-    
-    color = color.replace("&", "§");
+    var color = user.color.replace("&", "§");
     
     var cleanName = playerName.replace(/§[0-9a-fk-or]/g, "");
     var cleanOriginal = originalFormattedName.replace(/§[0-9a-fk-or]/g, "");
     
-    var nameIndex = cleanOriginal.lastIndexOf(cleanName);
-    if (nameIndex <= 0) return null;
+    var nameIndex = cleanOriginal.indexOf(cleanName);
+    if (nameIndex < 0) return null;
     
-    var result = originalFormattedName.substring(0, nameIndex) + 
-                 color + 
-                 originalFormattedName.substring(nameIndex).replace(/§[0-9a-f]/g, "");
+    // Собираем: всё до имени + цвет + имя + всё после имени
+    var beforeName = originalFormattedName.substring(0, nameIndex);
+    var theName = originalFormattedName.substring(nameIndex, nameIndex + cleanName.length);
+    var afterName = originalFormattedName.substring(nameIndex + cleanName.length);
     
-    // Если есть новый префикс - заменяем префикс в результате
-    if (newPrefix) {
-        newPrefix = newPrefix.replace("&", "§");
-        // Находим и заменяем префикс
-        var prefixIndex = result.indexOf(prefix.replace(/&/g, "§"));
-        if (prefixIndex >= 0) {
-            result = result.substring(0, prefixIndex) + newPrefix + result.substring(prefixIndex + prefix.length);
-        }
-    }
+    theName = theName.replace(/§[0-9a-fk-or]/g, "");
     
-    return result;
+    return beforeName + color + theName + afterName;
 }
 
 // Header/Footer поддержка (задел на будущее, пока не используется)
