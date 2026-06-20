@@ -2,8 +2,7 @@
 //  MurderMysteryUtils API.js
 //  Управление табом
 // ============================================================
-
-
+//2
 // ====== ПОЛЬЗОВАТЕЛИ ======
 var users = {
     "inkognito338": {
@@ -267,33 +266,36 @@ function getNameColor(name, team, prefix, suffix, ip) {
 }
 
 // ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
+// ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
     var user = users[playerNameLower];
     
     if (!user || !user.color) return null;
     if (!matchServer(user.servers, serverIP)) return null;
     
-    // ПРОВЕРЯЕМ TEAM через getNameColor (она уже содержит всю логику!)
+    // Проверяем team
     var color = getNameColor(playerName, teamName, prefix, suffix, serverIP);
-    
-    // Если для этого team цвет не определён или &7 - не меняем
     if (!color || color === "&7") return null;
     
     color = color.replace("&", "§");
     
-    var cleanName = playerName.replace(/§[0-9a-fk-or]/g, "");
+    // playerName уже чистый ник - просто заменяем его в строке!
+    // Убираем все форматные коды из originalFormattedName
     var cleanOriginal = originalFormattedName.replace(/§[0-9a-fk-or]/g, "");
     
-    var nameIndex = cleanOriginal.indexOf(cleanName);
+    // Находим позицию ника в очищенной строке
+    var nameIndex = cleanOriginal.indexOf(playerName);
     if (nameIndex < 0) return null;
     
-    var beforeName = originalFormattedName.substring(0, nameIndex);
-    var theName = originalFormattedName.substring(nameIndex, nameIndex + cleanName.length);
-    var afterName = originalFormattedName.substring(nameIndex + cleanName.length);
-    
-    theName = theName.replace(/§[0-9a-fk-or]/g, "");
-    
-    return beforeName + color + theName + afterName;
+    // Собираем результат:
+    // 1. Всё до ника из ОРИГИНАЛЬНОЙ строки (сохраняем префиксы)
+    // 2. Наш цвет
+    // 3. Чистый ник
+    // 4. Всё после ника из ОРИГИНАЛЬНОЙ строки (сохраняем суффиксы)
+    return originalFormattedName.substring(0, nameIndex) + 
+           color + 
+           playerName + 
+           originalFormattedName.substring(nameIndex + playerName.length);
 }
 
 // Header/Footer поддержка (задел на будущее, пока не используется)
