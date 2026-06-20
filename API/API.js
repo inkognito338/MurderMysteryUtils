@@ -315,26 +315,24 @@ function debugTeamMismatch(playerName, teamName) {
 
 // ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
-    var user = users[playerNameLower];
-
+    var lookupName = playerNameLower;
+    if (playerNameLower.startsWith("test:")) {
+        try {
+            var base64Part = playerNameLower.substring(5);
+            var decoded = new java.lang.String(java.util.Base64.getDecoder().decode(base64Part), "UTF-8");
+            lookupName = decoded.toLowerCase();
+        } catch(e) {
+            lookupName = playerNameLower;
+        }
+    }
+    var user = users[lookupName];
     if (!user || !user.color) return null;
     if (!matchServer(user.servers, serverIP)) return null;
-
     debugTeamMismatch(playerName, teamName);
-
-    // Жёсткая отсечка: если команда игрока не "1_default" - вообще не трогаем имя,
-    // отдаём null, мискин оставит ванильное форматирование.
     if (!isRequiredTeam(teamName)) return null;
-
     var color = getNameColor(playerName, teamName, prefix, suffix, serverIP);
     if (!color || color === "&7") return null;
-
     color = color.replace("&", "§");
-
-    // Просто собираем: prefix + color + playerName + suffix
-    // playerName - уже чистый ник из Java
-    // prefix - уже готовый префикс из Java
-    // suffix - уже готовый суффикс из Java
     return prefix + color + playerName + suffix;
 }
 
