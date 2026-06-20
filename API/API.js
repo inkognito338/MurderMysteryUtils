@@ -1,6 +1,6 @@
 // ============================================================
 //  MurderMysteryUtils API.js
-//  Управление табом
+//  Управление табом (совместимо с Java 8u51)
 // ============================================================
 
 // ====== ПОЛЬЗОВАТЕЛИ ======
@@ -117,15 +117,29 @@ var nameRules = [];
 
 // ====== ВСПОМОГАТЕЛЬНЫЕ ======
 
+// Замена indexOf для совместимости с Java 8u51
+function strContains(str, search) {
+    if (!str || !search) return false;
+    return str.indexOf(search) !== -1;
+}
+
+function arrContains(arr, item) {
+    if (!arr) return false;
+    for (var i = 0; i < arr.length; i++) {
+        if (arr[i] === item) return true;
+    }
+    return false;
+}
+
 function detectServer(ip) {
     if (!ip) return "default";
     ip = ip.toLowerCase().replace(/:\d+$/, "");
-    if (ip.indexOf("masedworld") !== -1) return "masedworld";
-    if (ip.indexOf("dexland") !== -1) return "dexland";
-    if (ip.indexOf("mineblaze") !== -1) return "mineblaze";
-    if (ip.indexOf("cheatmine") !== -1) return "cheatmine";
-    if (ip.indexOf("mineberry") !== -1) return "mineberry";
-    if (ip.indexOf("minepeak") !== -1) return "minepeak";
+    if (strContains(ip, "masedworld")) return "masedworld";
+    if (strContains(ip, "dexland")) return "dexland";
+    if (strContains(ip, "mineblaze")) return "mineblaze";
+    if (strContains(ip, "cheatmine")) return "cheatmine";
+    if (strContains(ip, "mineberry")) return "mineberry";
+    if (strContains(ip, "minepeak")) return "minepeak";
     var parts = ip.split(".");
     return parts.length >= 2 ? parts[parts.length - 2] : ip;
 }
@@ -135,16 +149,17 @@ function getServerSettings(ip) {
     if (serverConfig[serverName]) return serverConfig[serverName];
     for (var key in serverConfig) {
         if (key === "default") continue;
-        if (ip.toLowerCase().indexOf(key) !== -1) return serverConfig[key];
+        if (strContains(ip.toLowerCase(), key)) return serverConfig[key];
     }
     return serverConfig["default"] || {};
 }
 
 function matchServer(servers, ip) {
-    if (!servers || servers.indexOf("*") !== -1) return true;
+    if (!servers || servers.length === 0) return true;
+    if (arrContains(servers, "*")) return true;
     var lower = ip.toLowerCase();
     for (var i = 0; i < servers.length; i++) {
-        if (lower.indexOf(servers[i].toLowerCase()) !== -1) return true;
+        if (strContains(lower, servers[i].toLowerCase())) return true;
     }
     return false;
 }
@@ -160,28 +175,24 @@ function getPrefix(name, team, originalPrefix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
     
-    // 1. Пользовательский префикс (высший приоритет)
     var u = users[n];
     if (u && u.prefix !== undefined && matchServer(u.servers, ip)) {
         return u.prefix;
     }
     
-    // 2. Правила команды
     if (team && settings.teams && settings.teams[team]) {
         var ts = settings.teams[team];
         if (ts.prefix !== undefined) return ts.prefix;
     }
     
-    // 3. Правила замены цвета в префиксе
     if (settings.prefixRules && originalPrefix) {
         for (var i = 0; i < settings.prefixRules.length; i++) {
             var rule = settings.prefixRules[i];
-            if (rule.teams && rule.teams.indexOf(team) === -1) continue;
+            if (rule.teams && !arrContains(rule.teams, team)) continue;
             return replaceColor(originalPrefix, rule.from, rule.to);
         }
     }
     
-    // 4. Team patterns
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             var p = settings.teamPatterns[i];
@@ -198,28 +209,24 @@ function getSuffix(name, team, originalSuffix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
     
-    // 1. Пользовательский суффикс
     var u = users[n];
     if (u && u.suffix !== undefined && matchServer(u.servers, ip)) {
         return u.suffix;
     }
     
-    // 2. Правила команды
     if (team && settings.teams && settings.teams[team]) {
         var ts = settings.teams[team];
         if (ts.suffix !== undefined) return ts.suffix;
     }
     
-    // 3. Правила замены цвета в суффиксе
     if (settings.suffixRules && originalSuffix) {
         for (var i = 0; i < settings.suffixRules.length; i++) {
             var rule = settings.suffixRules[i];
-            if (rule.teams && rule.teams.indexOf(team) === -1) continue;
+            if (rule.teams && !arrContains(rule.teams, team)) continue;
             return replaceColor(originalSuffix, rule.from, rule.to);
         }
     }
     
-    // 4. Team patterns
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             var p = settings.teamPatterns[i];
@@ -236,13 +243,11 @@ function getNameColor(name, team, prefix, suffix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
     
-    // 1. Пользовательский цвет (высший приоритет)
     var u = users[n];
     if (u && u.color && matchServer(u.servers, ip)) {
         return u.color;
     }
     
-    // 2. Regex правила для имён
     if (nameRules.length > 0) {
         for (var i = 0; i < nameRules.length; i++) {
             if (nameRules[i].regex && nameRules[i].regex.test(name)) {
@@ -251,17 +256,14 @@ function getNameColor(name, team, prefix, suffix, ip) {
         }
     }
     
-    // 3. Глобальные цвета по команде
     if (team && globalTeamColors[team]) {
         return globalTeamColors[team].color;
     }
     
-    // 4. Правила сервера для команды
     if (team && settings.teams && settings.teams[team]) {
         return settings.teams[team].color;
     }
     
-    // 5. Team patterns
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             if (settings.teamPatterns[i].pattern && settings.teamPatterns[i].pattern.test(team)) {
@@ -270,21 +272,17 @@ function getNameColor(name, team, prefix, suffix, ip) {
         }
     }
     
-    // 6. Цвет из префикса
     if (prefix) {
         var m = prefix.match(/§[0-9a-f]/);
         if (m && m[0] !== "§7") return m[0].replace("§", "&");
     }
     
-    // 7. Дефолт
     return "&7";
 }
 
-// Header/Footer поддержка (задел на будущее, пока не используется)
 function getHeader(originalHeader, ip) { return null; }
 function getFooter(originalFooter, ip) { return null; }
 
-// ====== JAVA API ======
 function getApiTabColor(name) { var u = users[name.toLowerCase()]; return u ? u.color : null; }
 function getApiModuleSetting(name, mod) { var u = users[name.toLowerCase()]; return (u && u.modules && u.modules[mod] !== undefined) ? u.modules[mod] : null; }
 function getTabNameColor(name, team, prefix, suffix, ip) { return getNameColor(name, team, prefix, suffix, ip); }
