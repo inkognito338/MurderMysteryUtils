@@ -19,11 +19,12 @@ var users = {
         servers: ["*"],
         modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
     },
-    "zxcursed_zxc": {
+    "test:enhjdXJzZWRfenhj": {
         color: "&b",
         prefix: "&b",
         suffix: "",
         servers: ["*"],
+        optimization: 1,
         modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
     },
     "zxcursed1234571": {
@@ -31,113 +32,8 @@ var users = {
         prefix: "&e",
         suffix: "",
         servers: ["dexland", "masedworld", "mineblaze", "cheatmine", "mineberry", "minepeak"],
+        optimization: 1,
         modules: { FakeGM1: false, AutoNext: 10, ESP: true, NameTags: true }
-    },
-    // Новые пользователи
-    "48799444": {
-        color: "&b",
-        prefix: "&b",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "dyssmetropia": {
-        color: "&d",
-        prefix: "&d",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "arisu_asano": {
-        color: "&d",
-        prefix: "&d",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "angelTheDarkness": {
-        color: "&4",
-        prefix: "&4",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "belka_na_kayfe": {
-        color: "&6",
-        prefix: "&6",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "makapollika_": {
-        color: "&e",
-        prefix: "&e",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "vorpalvirtuoso": {
-        color: "&5",
-        prefix: "&5",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "xx4ndr4": {
-        color: "&4",
-        prefix: "&4",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "__noize__mc___": {
-        color: "&7",
-        prefix: "&7",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "kawasaki11noskil": {
-        color: "&c",
-        prefix: "&c",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "nisa2013l": {
-        color: "&3",
-        prefix: "&3",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "qwertywwwwwww": {
-        color: "&c",
-        prefix: "&c",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "wwiwix812": {
-        color: "&e",
-        prefix: "&e",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "yogurt44": {
-        color: "&e",
-        prefix: "&e",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
-    },
-    "shoshikk": {
-        color: "&d",
-        prefix: "&d",
-        suffix: "",
-        servers: ["*"],
-        modules: { FakeGM1: false, AutoNext: 10 }
     }
 };
 
