@@ -23,7 +23,7 @@ var users = {
         color: "&b",
         prefix: "&b",
         suffix: "",
-        servers: ["*"],
+        servers: ["dexland", "masedworld", "mineblaze", "cheatmine", "mineberry", "minepeak"],
         optimization: 2,
         modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
     },
