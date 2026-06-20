@@ -265,6 +265,7 @@ function getNameColor(name, team, prefix, suffix, ip) {
     return "&7";
 }
 
+// ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
     var user = users[playerNameLower];
     
@@ -276,7 +277,10 @@ function getModifiedTabName(playerName, playerNameLower, originalFormattedName, 
     
     color = color.replace("&", "§");
     
-    // Просто собираем: префикс + цвет + чистый ник + суффикс
+    // Просто собираем: prefix + color + playerName + suffix
+    // playerName - уже чистый ник из Java
+    // prefix - уже готовый префикс из Java
+    // suffix - уже готовый суффикс из Java
     return prefix + color + playerName + suffix;
 }
 
