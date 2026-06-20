@@ -7,21 +7,29 @@
 var users = {
     "inkognito338": {
         color: "&3",
+        prefix: "&3",
+        suffix: "",
         servers: ["*"],
         modules: { FakeGM1: false, AutoNext: 5 }
     },
     "ruinquie": {
         color: "&6",
+        prefix: "&6",
+        suffix: "",
         servers: ["*"],
         modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
     },
     "zxcursed_zxc": {
         color: "&b",
+        prefix: "&b",
+        suffix: "",
         servers: ["*"],
         modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
     },
     "zxcursed1234571": {
         color: "&e",
+        prefix: "&e",
+        suffix: "",
         servers: ["dexland", "masedworld", "mineblaze", "cheatmine", "mineberry", "minepeak"],
         modules: { FakeGM1: false, AutoNext: 10, ESP: true, NameTags: true }
     }
@@ -57,26 +65,49 @@ var serverConfig = {
         },
         prefixRules: [
             { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
         ]
     },
     "cheatmine": {
         teams: {
             "1_default": { color: "&a", prefix: "&a", suffix: "" }
-        }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
     },
     "mineberry": {
         teams: {
             "1_default": { color: "&a", prefix: "&a", suffix: "" }
-        }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
     },
     "minepeak": {
         teams: {
             "1_default": { color: "&a", prefix: "&a", suffix: "" }
-        }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
     },
     "default": {
         teams: {},
-        teamPatterns: []
+        teamPatterns: [],
+        prefixRules: [],
+        suffixRules: []
     }
 };
 
@@ -129,14 +160,19 @@ function getPrefix(name, team, originalPrefix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
     
+    // 1. Пользовательский префикс (высший приоритет)
     var u = users[n];
-    if (u && u.prefix && matchServer(u.servers, ip)) return u.prefix;
+    if (u && u.prefix !== undefined && matchServer(u.servers, ip)) {
+        return u.prefix;
+    }
     
+    // 2. Правила команды
     if (team && settings.teams && settings.teams[team]) {
         var ts = settings.teams[team];
         if (ts.prefix !== undefined) return ts.prefix;
     }
     
+    // 3. Правила замены цвета в префиксе
     if (settings.prefixRules && originalPrefix) {
         for (var i = 0; i < settings.prefixRules.length; i++) {
             var rule = settings.prefixRules[i];
@@ -145,10 +181,13 @@ function getPrefix(name, team, originalPrefix, ip) {
         }
     }
     
+    // 4. Team patterns
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             var p = settings.teamPatterns[i];
-            if (p.pattern && p.pattern.test(team)) return p.prefix !== undefined ? p.prefix : originalPrefix;
+            if (p.pattern && p.pattern.test(team)) {
+                return p.prefix !== undefined ? p.prefix : originalPrefix;
+            }
         }
     }
     
@@ -159,14 +198,19 @@ function getSuffix(name, team, originalSuffix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
     
+    // 1. Пользовательский суффикс
     var u = users[n];
-    if (u && u.suffix && matchServer(u.servers, ip)) return u.suffix;
+    if (u && u.suffix !== undefined && matchServer(u.servers, ip)) {
+        return u.suffix;
+    }
     
+    // 2. Правила команды
     if (team && settings.teams && settings.teams[team]) {
         var ts = settings.teams[team];
         if (ts.suffix !== undefined) return ts.suffix;
     }
     
+    // 3. Правила замены цвета в суффиксе
     if (settings.suffixRules && originalSuffix) {
         for (var i = 0; i < settings.suffixRules.length; i++) {
             var rule = settings.suffixRules[i];
@@ -175,10 +219,13 @@ function getSuffix(name, team, originalSuffix, ip) {
         }
     }
     
+    // 4. Team patterns
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             var p = settings.teamPatterns[i];
-            if (p.pattern && p.pattern.test(team)) return p.suffix !== undefined ? p.suffix : originalSuffix;
+            if (p.pattern && p.pattern.test(team)) {
+                return p.suffix !== undefined ? p.suffix : originalSuffix;
+            }
         }
     }
     
@@ -189,19 +236,32 @@ function getNameColor(name, team, prefix, suffix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
     
+    // 1. Пользовательский цвет (высший приоритет)
     var u = users[n];
-    if (u && u.color && matchServer(u.servers, ip)) return u.color;
+    if (u && u.color && matchServer(u.servers, ip)) {
+        return u.color;
+    }
     
+    // 2. Regex правила для имён
     if (nameRules.length > 0) {
         for (var i = 0; i < nameRules.length; i++) {
-            if (nameRules[i].regex && nameRules[i].regex.test(name)) return nameRules[i].color;
+            if (nameRules[i].regex && nameRules[i].regex.test(name)) {
+                return nameRules[i].color;
+            }
         }
     }
     
-    if (team && globalTeamColors[team]) return globalTeamColors[team].color;
+    // 3. Глобальные цвета по команде
+    if (team && globalTeamColors[team]) {
+        return globalTeamColors[team].color;
+    }
     
-    if (team && settings.teams && settings.teams[team]) return settings.teams[team].color;
+    // 4. Правила сервера для команды
+    if (team && settings.teams && settings.teams[team]) {
+        return settings.teams[team].color;
+    }
     
+    // 5. Team patterns
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             if (settings.teamPatterns[i].pattern && settings.teamPatterns[i].pattern.test(team)) {
@@ -210,11 +270,13 @@ function getNameColor(name, team, prefix, suffix, ip) {
         }
     }
     
+    // 6. Цвет из префикса
     if (prefix) {
         var m = prefix.match(/§[0-9a-f]/);
         if (m && m[0] !== "§7") return m[0].replace("§", "&");
     }
     
+    // 7. Дефолт
     return "&7";
 }
 
