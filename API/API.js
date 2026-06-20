@@ -2,7 +2,6 @@
 //  MurderMysteryUtils API.js
 //  Управление табом
 // ============================================================
-//23131
 // ====== ПОЛЬЗОВАТЕЛИ ======
 var users = {
     "inkognito338": {
@@ -161,14 +160,12 @@ function replaceColor(text, from, to) {
 }
 
 // Сравнение имени команды без учёта регистра и краевых пробелов.
-// Это защищает от случаев, когда сервер присылает team name с отличающимся регистром
-// или случайными пробелами, из-за чего строгое === не сработает.
 function isRequiredTeam(team) {
     if (!team) return false;
     return team.toString().trim().toLowerCase() === REQUIRED_TEAM.toLowerCase();
 }
 
-// ====== ГЛАВНЫЕ ФУНКЦИИ ======
+// ====== ГЛАВНЫЕ ФУНКЦИИ (без изменений, ищут по обычному нику) ======
 
 function getPrefix(name, team, originalPrefix, ip) {
     var n = name.toLowerCase();
@@ -176,7 +173,6 @@ function getPrefix(name, team, originalPrefix, ip) {
 
     var u = users[n];
     if (u && u.prefix !== undefined && matchServer(u.servers, ip)) {
-        // Кастомный prefix из "users" применяется только при нужной команде
         if (!isRequiredTeam(team)) return originalPrefix;
         return u.prefix;
     }
@@ -212,7 +208,6 @@ function getSuffix(name, team, originalSuffix, ip) {
 
     var u = users[n];
     if (u && u.suffix !== undefined && matchServer(u.servers, ip)) {
-        // Кастомный suffix из "users" применяется только при нужной команде
         if (!isRequiredTeam(team)) return originalSuffix;
         return u.suffix;
     }
@@ -248,12 +243,8 @@ function getNameColor(name, team, prefix, suffix, ip) {
 
     var u = users[n];
     if (u && u.color && matchServer(u.servers, ip)) {
-        // ВАЖНО: раньше return u.color срабатывал ДО проверки team,
-        // из-за чего условие "только при 1_default" игнорировалось для всех,
-        // кто прописан в users. Теперь сначала проверяем команду.
         if (!isRequiredTeam(team)) {
-            // Игрок есть в users, но команда не та - падаем дальше по цепочке
-            // (team-цвет сервера / паттерны / fallback), а не возвращаем u.color.
+            // Игрок есть в users, но команда не та - падаем дальше по цепочке.
         } else {
             return u.color;
         }
@@ -292,9 +283,6 @@ function getNameColor(name, team, prefix, suffix, ip) {
 }
 
 // ====== ОТЛАДКА ======
-// Временный флаг: при true печатает в консоль (через println, см. Java) подробный разбор
-// teamName посимвольно (коды символов), чтобы поймать невидимые/непечатные различия
-// между REQUIRED_TEAM и тем, что реально приходит со скорборда.
 var JS_DEBUG_TEAM = true;
 
 function debugTeamMismatch(playerName, teamName) {
@@ -315,23 +303,35 @@ function debugTeamMismatch(playerName, teamName) {
 
 // ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
-    var lookupName = playerNameLower;
-    if (playerNameLower.startsWith("test:")) {
-        try {
-            var base64Part = playerNameLower.substring(5);
-            var decoded = new java.lang.String(java.util.Base64.getDecoder().decode(base64Part), "UTF-8");
-            lookupName = decoded.toLowerCase();
-        } catch(e) {
-            lookupName = playerNameLower;
+    var user = null;
+
+    try {
+        var bytes = new java.lang.String(playerNameLower).getBytes("UTF-8");
+        var encodedBytes = java.util.Base64.getEncoder().encode(bytes);
+        var encodedStr = new java.lang.String(encodedBytes, "UTF-8");
+        var testKey = "test:" + encodedStr;
+
+        if (users[testKey]) {
+            user = users[testKey];
         }
+    } catch (e) {
+        user = null;
     }
-    var user = users[lookupName];
+
+    if (!user) {
+        user = users[playerNameLower];
+    }
+
     if (!user || !user.color) return null;
     if (!matchServer(user.servers, serverIP)) return null;
+
     debugTeamMismatch(playerName, teamName);
+
+    // Жёсткая отсечка: если команда игрока не "1_default" - вообще не трогаем имя.
     if (!isRequiredTeam(teamName)) return null;
-    var color = getNameColor(playerName, teamName, prefix, suffix, serverIP);
+    var color = user.color;
     if (!color || color === "&7") return null;
+
     color = color.replace("&", "§");
     return prefix + color + playerName + suffix;
 }
