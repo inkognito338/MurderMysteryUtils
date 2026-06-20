@@ -1,6 +1,6 @@
 // ============================================================
 //  MurderMysteryUtils API.js
-//  Управление табом (совместимо с Java 8u51)
+//  Управление табом
 // ============================================================
 
 // ====== ПОЛЬЗОВАТЕЛИ ======
@@ -117,29 +117,15 @@ var nameRules = [];
 
 // ====== ВСПОМОГАТЕЛЬНЫЕ ======
 
-// Замена indexOf для совместимости с Java 8u51
-function strContains(str, search) {
-    if (!str || !search) return false;
-    return str.indexOf(search) !== -1;
-}
-
-function arrContains(arr, item) {
-    if (!arr) return false;
-    for (var i = 0; i < arr.length; i++) {
-        if (arr[i] === item) return true;
-    }
-    return false;
-}
-
 function detectServer(ip) {
     if (!ip) return "default";
     ip = ip.toLowerCase().replace(/:\d+$/, "");
-    if (strContains(ip, "masedworld")) return "masedworld";
-    if (strContains(ip, "dexland")) return "dexland";
-    if (strContains(ip, "mineblaze")) return "mineblaze";
-    if (strContains(ip, "cheatmine")) return "cheatmine";
-    if (strContains(ip, "mineberry")) return "mineberry";
-    if (strContains(ip, "minepeak")) return "minepeak";
+    if (ip.indexOf("masedworld") !== -1) return "masedworld";
+    if (ip.indexOf("dexland") !== -1) return "dexland";
+    if (ip.indexOf("mineblaze") !== -1) return "mineblaze";
+    if (ip.indexOf("cheatmine") !== -1) return "cheatmine";
+    if (ip.indexOf("mineberry") !== -1) return "mineberry";
+    if (ip.indexOf("minepeak") !== -1) return "minepeak";
     var parts = ip.split(".");
     return parts.length >= 2 ? parts[parts.length - 2] : ip;
 }
@@ -149,17 +135,16 @@ function getServerSettings(ip) {
     if (serverConfig[serverName]) return serverConfig[serverName];
     for (var key in serverConfig) {
         if (key === "default") continue;
-        if (strContains(ip.toLowerCase(), key)) return serverConfig[key];
+        if (ip.toLowerCase().indexOf(key) !== -1) return serverConfig[key];
     }
     return serverConfig["default"] || {};
 }
 
 function matchServer(servers, ip) {
-    if (!servers || servers.length === 0) return true;
-    if (arrContains(servers, "*")) return true;
+    if (!servers || servers.indexOf("*") !== -1) return true;
     var lower = ip.toLowerCase();
     for (var i = 0; i < servers.length; i++) {
-        if (strContains(lower, servers[i].toLowerCase())) return true;
+        if (lower.indexOf(servers[i].toLowerCase()) !== -1) return true;
     }
     return false;
 }
@@ -188,7 +173,7 @@ function getPrefix(name, team, originalPrefix, ip) {
     if (settings.prefixRules && originalPrefix) {
         for (var i = 0; i < settings.prefixRules.length; i++) {
             var rule = settings.prefixRules[i];
-            if (rule.teams && !arrContains(rule.teams, team)) continue;
+            if (rule.teams && rule.teams.indexOf(team) === -1) continue;
             return replaceColor(originalPrefix, rule.from, rule.to);
         }
     }
@@ -222,7 +207,7 @@ function getSuffix(name, team, originalSuffix, ip) {
     if (settings.suffixRules && originalSuffix) {
         for (var i = 0; i < settings.suffixRules.length; i++) {
             var rule = settings.suffixRules[i];
-            if (rule.teams && !arrContains(rule.teams, team)) continue;
+            if (rule.teams && rule.teams.indexOf(team) === -1) continue;
             return replaceColor(originalSuffix, rule.from, rule.to);
         }
     }
@@ -280,9 +265,35 @@ function getNameColor(name, team, prefix, suffix, ip) {
     return "&7";
 }
 
+// ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
+function getModifiedTabName(playerName, originalFormattedName) {
+    var name = playerName.toLowerCase();
+    var user = users[name];
+    
+    // Если нет в API - не трогаем
+    if (!user || !user.color) return null;
+    
+    var color = user.color.replace("&", "§");
+    
+    // Убираем все форматные коды для поиска имени
+    var cleanName = playerName.replace(/§[0-9a-fk-or]/g, "");
+    var cleanOriginal = originalFormattedName.replace(/§[0-9a-fk-or]/g, "");
+    
+    // Находим позицию имени
+    var nameIndex = cleanOriginal.lastIndexOf(cleanName);
+    if (nameIndex <= 0) return null;
+    
+    // Всё до имени (префиксы сервера) + наш цвет + всё от имени без цветовых кодов
+    return originalFormattedName.substring(0, nameIndex) + 
+           color + 
+           originalFormattedName.substring(nameIndex).replace(/§[0-9a-f]/g, "");
+}
+
+// Header/Footer поддержка (задел на будущее, пока не используется)
 function getHeader(originalHeader, ip) { return null; }
 function getFooter(originalFooter, ip) { return null; }
 
+// ====== JAVA API ======
 function getApiTabColor(name) { var u = users[name.toLowerCase()]; return u ? u.color : null; }
 function getApiModuleSetting(name, mod) { var u = users[name.toLowerCase()]; return (u && u.modules && u.modules[mod] !== undefined) ? u.modules[mod] : null; }
 function getTabNameColor(name, team, prefix, suffix, ip) { return getNameColor(name, team, prefix, suffix, ip); }
