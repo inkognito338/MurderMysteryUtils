@@ -115,6 +115,10 @@ var serverConfig = {
 var globalTeamColors = {};
 var nameRules = [];
 
+// Команда, при которой разрешена замена цвета/префикса/суффикса для пользователей из "users".
+// Если у игрока team !== REQUIRED_TEAM - кастомный цвет/префикс/суффикс из "users" применяться не будет.
+var REQUIRED_TEAM = "1_default";
+
 // ====== ВСПОМОГАТЕЛЬНЫЕ ======
 
 function detectServer(ip) {
@@ -154,22 +158,32 @@ function replaceColor(text, from, to) {
     return text.split(from.replace("&", "§")).join(to.replace("&", "§"));
 }
 
+// Сравнение имени команды без учёта регистра и краевых пробелов.
+// Это защищает от случаев, когда сервер присылает team name с отличающимся регистром
+// или случайными пробелами, из-за чего строгое === не сработает.
+function isRequiredTeam(team) {
+    if (!team) return false;
+    return team.toString().trim().toLowerCase() === REQUIRED_TEAM.toLowerCase();
+}
+
 // ====== ГЛАВНЫЕ ФУНКЦИИ ======
 
 function getPrefix(name, team, originalPrefix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
-    
+
     var u = users[n];
     if (u && u.prefix !== undefined && matchServer(u.servers, ip)) {
+        // Кастомный prefix из "users" применяется только при нужной команде
+        if (!isRequiredTeam(team)) return originalPrefix;
         return u.prefix;
     }
-    
+
     if (team && settings.teams && settings.teams[team]) {
         var ts = settings.teams[team];
         if (ts.prefix !== undefined) return ts.prefix;
     }
-    
+
     if (settings.prefixRules && originalPrefix) {
         for (var i = 0; i < settings.prefixRules.length; i++) {
             var rule = settings.prefixRules[i];
@@ -177,7 +191,7 @@ function getPrefix(name, team, originalPrefix, ip) {
             return replaceColor(originalPrefix, rule.from, rule.to);
         }
     }
-    
+
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             var p = settings.teamPatterns[i];
@@ -186,24 +200,26 @@ function getPrefix(name, team, originalPrefix, ip) {
             }
         }
     }
-    
+
     return null;
 }
 
 function getSuffix(name, team, originalSuffix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
-    
+
     var u = users[n];
     if (u && u.suffix !== undefined && matchServer(u.servers, ip)) {
+        // Кастомный suffix из "users" применяется только при нужной команде
+        if (!isRequiredTeam(team)) return originalSuffix;
         return u.suffix;
     }
-    
+
     if (team && settings.teams && settings.teams[team]) {
         var ts = settings.teams[team];
         if (ts.suffix !== undefined) return ts.suffix;
     }
-    
+
     if (settings.suffixRules && originalSuffix) {
         for (var i = 0; i < settings.suffixRules.length; i++) {
             var rule = settings.suffixRules[i];
@@ -211,7 +227,7 @@ function getSuffix(name, team, originalSuffix, ip) {
             return replaceColor(originalSuffix, rule.from, rule.to);
         }
     }
-    
+
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             var p = settings.teamPatterns[i];
@@ -220,19 +236,27 @@ function getSuffix(name, team, originalSuffix, ip) {
             }
         }
     }
-    
+
     return null;
 }
 
 function getNameColor(name, team, prefix, suffix, ip) {
     var n = name.toLowerCase();
     var settings = getServerSettings(ip);
-    
+
     var u = users[n];
     if (u && u.color && matchServer(u.servers, ip)) {
-        return u.color;
+        // ВАЖНО: раньше return u.color срабатывал ДО проверки team,
+        // из-за чего условие "только при 1_default" игнорировалось для всех,
+        // кто прописан в users. Теперь сначала проверяем команду.
+        if (!isRequiredTeam(team)) {
+            // Игрок есть в users, но команда не та - падаем дальше по цепочке
+            // (team-цвет сервера / паттерны / fallback), а не возвращаем u.color.
+        } else {
+            return u.color;
+        }
     }
-    
+
     if (nameRules.length > 0) {
         for (var i = 0; i < nameRules.length; i++) {
             if (nameRules[i].regex && nameRules[i].regex.test(name)) {
@@ -240,15 +264,15 @@ function getNameColor(name, team, prefix, suffix, ip) {
             }
         }
     }
-    
+
     if (team && globalTeamColors[team]) {
         return globalTeamColors[team].color;
     }
-    
+
     if (team && settings.teams && settings.teams[team]) {
         return settings.teams[team].color;
     }
-    
+
     if (settings.teamPatterns && team) {
         for (var i = 0; i < settings.teamPatterns.length; i++) {
             if (settings.teamPatterns[i].pattern && settings.teamPatterns[i].pattern.test(team)) {
@@ -256,27 +280,31 @@ function getNameColor(name, team, prefix, suffix, ip) {
             }
         }
     }
-    
+
     if (prefix) {
         var m = prefix.match(/§[0-9a-f]/);
         if (m && m[0] !== "§7") return m[0].replace("§", "&");
     }
-    
+
     return "&7";
 }
 
 // ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
     var user = users[playerNameLower];
-    
+
     if (!user || !user.color) return null;
     if (!matchServer(user.servers, serverIP)) return null;
-    
+
+    // Жёсткая отсечка: если команда игрока не "1_default" - вообще не трогаем имя,
+    // отдаём null, мискин оставит ванильное форматирование.
+    if (!isRequiredTeam(teamName)) return null;
+
     var color = getNameColor(playerName, teamName, prefix, suffix, serverIP);
     if (!color || color === "&7") return null;
-    
+
     color = color.replace("&", "§");
-    
+
     // Просто собираем: prefix + color + playerName + suffix
     // playerName - уже чистый ник из Java
     // prefix - уже готовый префикс из Java
