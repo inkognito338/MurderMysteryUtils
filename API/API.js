@@ -266,12 +266,15 @@ function getNameColor(name, team, prefix, suffix, ip) {
 }
 
 // ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
-function getModifiedTabName(playerName, originalFormattedName) {
+function getModifiedTabName(playerName, originalFormattedName, serverIP) {
     var name = playerName.toLowerCase();
     var user = users[name];
     
     // Если нет в API - не трогаем
     if (!user || !user.color) return null;
+    
+    // Проверяем сервер (IP приходит из Java)
+    if (!matchServer(user.servers, serverIP)) return null;
     
     var color = user.color.replace("&", "§");
     
