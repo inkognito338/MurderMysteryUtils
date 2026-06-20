@@ -270,23 +270,19 @@ function getModifiedTabName(playerName, originalFormattedName, serverIP) {
     var name = playerName.toLowerCase();
     var user = users[name];
     
-    // Если нет в API - не трогаем
     if (!user || !user.color) return null;
     
-    // Проверяем сервер (IP приходит из Java)
+    // ПРОВЕРКА СЕРВЕРА
     if (!matchServer(user.servers, serverIP)) return null;
     
     var color = user.color.replace("&", "§");
     
-    // Убираем все форматные коды для поиска имени
     var cleanName = playerName.replace(/§[0-9a-fk-or]/g, "");
     var cleanOriginal = originalFormattedName.replace(/§[0-9a-fk-or]/g, "");
     
-    // Находим позицию имени
     var nameIndex = cleanOriginal.lastIndexOf(cleanName);
     if (nameIndex <= 0) return null;
     
-    // Всё до имени (префиксы сервера) + наш цвет + всё от имени без цветовых кодов
     return originalFormattedName.substring(0, nameIndex) + 
            color + 
            originalFormattedName.substring(nameIndex).replace(/§[0-9a-f]/g, "");
