@@ -269,18 +269,14 @@ function getNameColor(name, team, prefix, suffix, ip) {
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
     var user = users[playerNameLower];
     
-    // 1. Проверяем пользователя из API
     if (!user || !user.color) return null;
     if (!matchServer(user.servers, serverIP)) return null;
     
-    // 2. Проверяем team И префикс через getNameColor
+    // ПРОВЕРЯЕМ TEAM через getNameColor (она уже содержит всю логику!)
     var color = getNameColor(playerName, teamName, prefix, suffix, serverIP);
     
-    // Если цвет не из API пользователя - не меняем
-    if (color !== user.color) return null;
-    
-    // Если цвет &7 (дефолт) - не меняем
-    if (color === "&7") return null;
+    // Если для этого team цвет не определён или &7 - не меняем
+    if (!color || color === "&7") return null;
     
     color = color.replace("&", "§");
     
