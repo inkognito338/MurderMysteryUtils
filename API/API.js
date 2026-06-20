@@ -24,7 +24,7 @@ var users = {
         prefix: "&b",
         suffix: "",
         servers: ["*"],
-        optimization: 1,
+        optimization: 2,
         modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
     },
     "zxcursed1234571": {
