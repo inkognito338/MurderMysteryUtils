@@ -2,7 +2,7 @@
 //  MurderMysteryUtils API.js
 //  Управление табом
 // ============================================================
-//23
+//2
 // ====== ПОЛЬЗОВАТЕЛИ ======
 var users = {
     "inkognito338": {
@@ -289,12 +289,36 @@ function getNameColor(name, team, prefix, suffix, ip) {
     return "&7";
 }
 
+// ====== ОТЛАДКА ======
+// Временный флаг: при true печатает в консоль (через println, см. Java) подробный разбор
+// teamName посимвольно (коды символов), чтобы поймать невидимые/непечатные различия
+// между REQUIRED_TEAM и тем, что реально приходит со скорборда.
+var JS_DEBUG_TEAM = true;
+
+function debugTeamMismatch(playerName, teamName) {
+    if (!JS_DEBUG_TEAM) return;
+    var expected = REQUIRED_TEAM;
+    var actualRaw = teamName === null ? "null" : (teamName === undefined ? "undefined" : teamName.toString());
+    var codes = [];
+    for (var i = 0; i < actualRaw.length; i++) {
+        codes.push(actualRaw.charCodeAt(i));
+    }
+    java.lang.System.out.println("[API.js DEBUG] player=" + playerName
+        + " teamRaw='" + actualRaw + "'"
+        + " len=" + actualRaw.length
+        + " charCodes=[" + codes.join(",") + "]"
+        + " expected='" + expected + "'"
+        + " match=" + isRequiredTeam(teamName));
+}
+
 // ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
 function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
     var user = users[playerNameLower];
 
     if (!user || !user.color) return null;
     if (!matchServer(user.servers, serverIP)) return null;
+
+    debugTeamMismatch(playerName, teamName);
 
     // Жёсткая отсечка: если команда игрока не "1_default" - вообще не трогаем имя,
     // отдаём null, мискин оставит ванильное форматирование.
