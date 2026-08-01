@@ -38,4 +38,4 @@
 - Часть модулей на других серверах с MurderMystery не будет работать
 - так как там могут быть разные роли, разные предметы убийцы, разные форматы чата.
 
-![скриншот](https://github.com/inkognito338/MurderMysteryUtils/blob/main/2026-02-06_00.33.57.png)
+![скриншот](https://github.com/inkognito338/MurderMysteryUtils/blob/main/release_notes/3.0/2026-08-01_20.46.28.png)
