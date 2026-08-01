@@ -1,9 +1,9 @@
--- check_update.lua - Обновления, триггер и сообщения123213
+-- check_update.lua - Обновления, триггер и сообщения
 
 -- Конфигурация обновлений
 local updaterConfig = {
-    latest_version = "2.1.1",
-    recommended_version = "2.1.0",
+    latest_version = "3.0",
+    recommended_version = "3.0",
     download_url = "https://github.com/inkognito338/MurderMysteryUtils/releases/latest"
 }
 
