@@ -1,0 +1,68 @@
+{
+  "updater": {
+    "enabled": true,
+    "latest_version": "2.1.1",
+    "recommended_version": "2.1.0",
+    "download_url": "https://github.com/inkognito338/MurderMysteryUtils/releases/latest",
+    "versions": {
+      "1.0.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "Initial release.",
+          "ru": "Первый релиз."
+        }
+      },
+      "1.1.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "Optimizations. InfoGUI replaced with Info HUD. Added Fly, Tracers, Spammer.",
+          "ru": "Оптимизации. InfoGUI заменён на Info HUD. Добавлены: Fly, Tracers, Spammer."
+        }
+      },
+      "1.2.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "Fixed yellow hand bug. Improved Spammer. Sprint bypass. Added Chams module. Added keybinds F6. Added .gm command.",
+          "ru": "Исправлен баг с жёлтой рукой. Улучшен Spammer. Sprint обходит античит. Добавлен модуль Chams. Добавлены клавиши F6. Добавлена команда .gm."
+        }
+      },
+      "2.0.0": {
+        "status": "outdated",
+        "changelog": {
+          "en": "New GUI menu design. Optimizations and code cleanup. Fixed ESP. Improved many modules.",
+          "ru": "Новый дизайн GUI меню. Оптимизации и чистка кода. Исправлен ESP. Улучшены многие модули."
+        }
+      },
+      "2.1.0": {
+        "status": "latest",
+        "changelog": {
+          "en": "New GUI menu design. Optimizations and code cleanup. Fixed ESP. Improved many modules. Added: AntiBlind, AutoNext, AutoRoleAnnounce, BarrierVision, CustomTime, CustomWeather, FakeGM1.",
+          "ru": "Новый дизайн GUI меню. Оптимизации и чистка кода. Исправлен ESP. Улучшены многие модули. Добавлены: AntiBlind, AutoNext, AutoRoleAnnounce, BarrierVision, CustomTime, CustomWeather, FakeGM1."
+        }
+      }
+    }
+  },
+  "author": {
+    "name": "inkognito338",
+    "github": "https://github.com/inkognito338",
+    "discord": "inkognito338"
+  },
+  "messages": {
+    "update_message": {
+      "en": "&7[&6MurderMysteryUtils&6] &fNew version &e{latest} &favailable! You have &7{current}&f. Download: &2{download_url}",
+      "ru": "&7[&6MurderMysteryUtils&6] &fДоступна новая версия &e{latest}&f! У вас &7{current}&f. Скачать: &2{download_url}"
+    },
+    "uptodate_message": {
+      "en": [
+        "&7[&6MurderMysteryUtils&7] &fThank you for installing and using the mod! You're also welcome to join a Discord server run by a friend of the mod author. Please note that this server is not affiliated with, endorsed by, or related to the mod in any way: &bhttps://dsc.gg/skvlink"
+      ],
+      "ru": [
+        "&7[&6MurderMysteryUtils&7] &fСпасибо, что установили и используете мод! Вы также можете присоединиться к Discord-серверу друга автора мода. Обратите внимание: этот сервер никак не связан с модом, его разработкой или поддержкой: &bhttps://dsc.gg/skvlink"
+      ]
+    },
+    "recommended_message": {
+      "en": "&7[&6MurderMysteryUtils&6] &fRecommended version: &e{recommended}&f. You have &7{current}",
+      "ru": "&7[&6MurderMysteryUtils&6] &fRecommended version: &e{recommended}&f. У вас &7{current}"
+    }
+  }
+}

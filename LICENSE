@@ -1,0 +1,39 @@
+MurderMysteryUtils License
+
+1. Permissions
+
+You may:
+- View the source code for personal use
+- Use the mod in any form
+- Distribute the original unmodified version freely
+- Distribute modified versions, including public releases, provided they comply with Section 2 and Section 3
+- Share links to the original mod
+
+2. Distribution Conditions
+
+Any distribution (original or modified) is allowed only if ALL conditions are met:
+- The original author (inkognito338) is clearly credited and a link to the original mod is included
+- The blacklist system, UpdateChecker, OnlineMode, remote Lua scripts execution from GitHub, and developer/sponsor display system remain present, functional, and connected to the original API endpoints
+- The remote Lua scripts loaded from GitHub act solely as safe check handlers and verification routines that do not have access to the file system, disk, or operating system (as file/code execution functions like load, loadstring, dofile, loadfile, require are disabled in the Lua environment)
+- The mod must clearly indicate the original authorship and must not misrepresent modified versions as fully original work
+
+3. Restrictions
+
+You are NOT allowed to:
+- Extract, copy, reuse, or incorporate any part of the source code from this project into other projects, mods, or software without prior explicit written permission from the author
+- Sell the mod or any modified version under any circumstances
+- Remove, disable, bypass, or hide required systems (blacklist, UpdateChecker, OnlineMode, remote GitHub Lua scripts execution, developer/sponsor display)
+- Claim full authorship of the original mod in any version
+- Rebrand or redistribute the mod in a way that conceals the original author identity
+
+4. No Warranty & Indemnification
+
+The mod is provided “as is”, without any warranty.
+The author is not liable for any damages or consequences arising from its use or distribution, including bans, data loss, or third-party claims.
+Distributors of modified versions are responsible for their own modifications.
+
+5. Disclaimer
+
+The mod may violate game server rules. The author is not responsible for any consequences from its use, including bans or stat resets.
+
+© 2025–2026 inkognito338 (real.inkognito.338@gmail.com)

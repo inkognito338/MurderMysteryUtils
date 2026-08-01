@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "compatibilityLevel": "JAVA_8",
+  "package": "real.inkognito338.murdermysteryutils.mixin",
+  "refmap": "mixins.murdermysteryutils.refmap.json",
+  "client": [
+    "MixinFontRenderer",
+    "MixinGuiIngame",
+    "MixinGuiNewChat",
+    "MixinRenderLivingBase",
+    "RenderWeatherMixin"
+  ],
+  "minVersion": "0.7.11",
+  "mixins": [
+    "MixinBlockBarrier"
+  ]
+}

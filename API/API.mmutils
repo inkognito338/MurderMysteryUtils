@@ -1,0 +1,431 @@
+// ============================================================
+//  MurderMysteryUtils API.mmutils
+//  Управление табом
+// ============================================================
+
+// ====== ПОЛЬЗОВАТЕЛИ ======
+var users = {
+    "inkognito338": {
+        color: "&3",
+        prefix: "&3",
+        suffix: "",
+        servers: ["*"],
+        modules: { FakeGM1: false, AutoNext: 5 }
+    },
+    "ruinquie": {
+        color: "&6",
+        prefix: "&6",
+        suffix: "",
+        servers: ["*"],
+        modules: { FakeGM1: false, AutoNext: 10, MurderAlert: 35 }
+    },
+    "zxcursed1234571": {
+        color: "&e",
+        prefix: "&e",
+        suffix: "",
+        servers: ["dexland", "masedworld", "mineblaze", "cheatmine", "mineberry", "minepeak"],
+        optimization: 1,
+        modules: { FakeGM1: false, AutoNext: 10, ESP: true, NameTags: true }
+    }
+};
+
+// ====== НАСТРОЙКИ СЕРВЕРОВ ======
+var serverConfig = {
+    "masedworld": {
+        teams: {
+            "1_default": { color: "&a", prefix: "&a", suffix: "" }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
+    },
+    "dexland": {
+        teams: {
+            "1_default": { color: "&a", prefix: "&a", suffix: "" }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
+    },
+    "mineblaze": {
+        teams: {
+            "1_default": { color: "&a", prefix: "&a", suffix: "" }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
+    },
+    "cheatmine": {
+        teams: {
+            "1_default": { color: "&a", prefix: "&a", suffix: "" }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
+    },
+    "mineberry": {
+        teams: {
+            "1_default": { color: "&a", prefix: "&a", suffix: "" }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
+    },
+    "minepeak": {
+        teams: {
+            "1_default": { color: "&a", prefix: "&a", suffix: "" }
+        },
+        prefixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ],
+        suffixRules: [
+            { from: "&7", to: "&a", teams: ["1_default"] }
+        ]
+    },
+    "default": {
+        teams: {},
+        prefixRules: [],
+        suffixRules: []
+    }
+};
+
+// ====== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ======
+var REQUIRED_TEAM = "1_default";
+var JS_DEBUG_TEAM = true;
+
+// ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
+
+function detectServer(ip) {
+    if (ip == null || ip == "") {
+        return "default";
+    }
+    
+    var lowerIp = ip.toLowerCase();
+    
+    // Remove port if present (regex: :\d+$)
+    var portPattern = "(:[0-9]+)$";
+    if (lowerIp.matches(portPattern)) {
+        lowerIp = lowerIp.replace(portPattern, "");
+    }
+    
+    if (lowerIp.contains("masedworld")) return "masedworld";
+    if (lowerIp.contains("dexland")) return "dexland";
+    if (lowerIp.contains("mineblaze")) return "mineblaze";
+    if (lowerIp.contains("cheatmine")) return "cheatmine";
+    if (lowerIp.contains("mineberry")) return "mineberry";
+    if (lowerIp.contains("minepeak")) return "minepeak";
+    
+    var parts = lowerIp.split(".");
+    if (parts.length >= 2) {
+        return parts[parts.length - 2];
+    }
+    
+    return lowerIp;
+}
+
+function getServerSettings(ip) {
+    var serverName = detectServer(ip);
+    
+    if (serverConfig[serverName] != null) {
+        return serverConfig[serverName];
+    }
+    
+    var keys = serverConfig.keys();
+    for (var i = 0; i < keys.length; i = i + 1) {
+        var key = keys[i];
+        if (key == "default") {
+            continue;
+        }
+        if (ip.toLowerCase().contains(key)) {
+            return serverConfig[key];
+        }
+    }
+    
+    var defaultConfig = serverConfig["default"];
+    if (defaultConfig != null) {
+        return defaultConfig;
+    }
+    
+    return {};
+}
+
+function matchServer(servers, ip) {
+    if (servers == null) {
+        return false;
+    }
+    
+    for (var i = 0; i < servers.length; i = i + 1) {
+        if (servers[i] == "*") {
+            return true;
+        }
+    }
+    
+    var lowerIp = ip.toLowerCase();
+    for (var i = 0; i < servers.length; i = i + 1) {
+        if (lowerIp.contains(servers[i].toLowerCase())) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+function replaceColor(text, from, to) {
+    if (text == null) {
+        return text;
+    }
+    
+    var fromFixed = from.replace("&", "§");
+    var toFixed = to.replace("&", "§");
+    
+    return text.replace(fromFixed, toFixed);
+}
+
+function isRequiredTeam(team) {
+    if (team == null) {
+        return false;
+    }
+    
+    var teamStr = team.toString().trim().toLowerCase();
+    return teamStr == REQUIRED_TEAM.toLowerCase();
+}
+
+// ====== ГЛАВНЫЕ ФУНКЦИИ ======
+
+function getPrefix(name, team, originalPrefix, ip) {
+    var lowerName = name.toLowerCase();
+    var settings = getServerSettings(ip);
+    
+    var u = users[lowerName];
+    if (u != null && u.prefix != null && matchServer(u.servers, ip)) {
+        if (!isRequiredTeam(team)) {
+            return originalPrefix;
+        }
+        return u.prefix;
+    }
+    
+    if (team != null && settings.teams != null) {
+        var ts = settings.teams[team];
+        if (ts != null && ts.prefix != null) {
+            return ts.prefix;
+        }
+    }
+    
+    if (settings.prefixRules != null && originalPrefix != null) {
+        for (var i = 0; i < settings.prefixRules.length; i = i + 1) {
+            var rule = settings.prefixRules[i];
+            if (rule.teams != null && !rule.teams.contains(team)) {
+                continue;
+            }
+            return replaceColor(originalPrefix, rule.from, rule.to);
+        }
+    }
+    
+    return null;
+}
+
+function getSuffix(name, team, originalSuffix, ip) {
+    var lowerName = name.toLowerCase();
+    var settings = getServerSettings(ip);
+    
+    var u = users[lowerName];
+    if (u != null && u.suffix != null && matchServer(u.servers, ip)) {
+        if (!isRequiredTeam(team)) {
+            return originalSuffix;
+        }
+        return u.suffix;
+    }
+    
+    if (team != null && settings.teams != null) {
+        var ts = settings.teams[team];
+        if (ts != null && ts.suffix != null) {
+            return ts.suffix;
+        }
+    }
+    
+    if (settings.suffixRules != null && originalSuffix != null) {
+        for (var i = 0; i < settings.suffixRules.length; i = i + 1) {
+            var rule = settings.suffixRules[i];
+            if (rule.teams != null && !rule.teams.contains(team)) {
+                continue;
+            }
+            return replaceColor(originalSuffix, rule.from, rule.to);
+        }
+    }
+    
+    return null;
+}
+
+function getNameColor(name, team, prefix, suffix, ip) {
+    var lowerName = name.toLowerCase();
+    var settings = getServerSettings(ip);
+    
+    var u = users[lowerName];
+    if (u != null && u.color != null && matchServer(u.servers, ip)) {
+        if (isRequiredTeam(team)) {
+            return u.color;
+        }
+    }
+    
+    if (team != null && settings.teams != null) {
+        var ts = settings.teams[team];
+        if (ts != null && ts.color != null) {
+            return ts.color;
+        }
+    }
+    
+    if (prefix != null) {
+        var colorMatch = prefix.indexOf("§");
+        if (colorMatch != -1 && colorMatch + 1 < prefix.length) {
+            var colorChar = prefix.substring(colorMatch + 1, colorMatch + 2);
+            if (colorChar != "7") {
+                return "&" + colorChar;
+            }
+        }
+    }
+    
+    return "&7";
+}
+
+// ====== ОТЛАДКА ======
+
+function debugTeamMismatch(playerName, teamName) {
+    if (!JS_DEBUG_TEAM) {
+        return;
+    }
+    
+    var expected = REQUIRED_TEAM;
+    var actualRaw = "null";
+    
+    if (teamName != null) {
+        actualRaw = teamName.toString();
+    }
+    
+    var match = isRequiredTeam(teamName);
+    
+    console.log("[API] DEBUG player=" + playerName + 
+                " team='" + actualRaw + "'" +
+                " expected='" + expected + "'" +
+                " match=" + match);
+}
+
+// ====== ФУНКЦИЯ ДЛЯ МИКСИНА (вызывается из Java) ======
+
+function getModifiedTabName(playerName, playerNameLower, originalFormattedName, serverIP, teamName, prefix, suffix) {
+    var user = users[playerNameLower];
+    
+    // Try Base64 encoded lookup for test users
+    if (user == null) {
+        try {
+            var bytes = playerNameLower.getBytes("UTF-8");
+            var encodedBytes = java.util.Base64.getEncoder().encode(bytes);
+            var encodedStr = new java.lang.String(encodedBytes, "UTF-8");
+            var testKey = "test:" + encodedStr;
+            
+            if (users[testKey] != null) {
+                user = users[testKey];
+            }
+        } catch (e) {
+            user = null;
+        }
+    }
+    
+    if (user == null || user.color == null) {
+        return null;
+    }
+    
+    if (!matchServer(user.servers, serverIP)) {
+        return null;
+    }
+    
+    debugTeamMismatch(playerName, teamName);
+    
+    if (!isRequiredTeam(teamName)) {
+        return null;
+    }
+    
+    var color = user.color;
+    if (color == null || color == "&7") {
+        return null;
+    }
+    
+    color = color.replace("&", "§");
+    return prefix + color + playerName + suffix;
+}
+
+// ====== Header/Footer ======
+
+function getHeader(originalHeader, ip) {
+    return null;
+}
+
+function getFooter(originalFooter, ip) {
+    return null;
+}
+
+// ====== JAVA API ФУНКЦИИ ======
+
+function getApiTabColor(name) {
+    var lowerName = name.toLowerCase();
+    var u = users[lowerName];
+    
+    if (u != null) {
+        return u.color;
+    }
+    
+    return null;
+}
+
+function getApiModuleSetting(name, mod) {
+    var lowerName = name.toLowerCase();
+    var u = users[lowerName];
+    
+    if (u != null && u.modules != null) {
+        var setting = u.modules[mod];
+        if (setting != null) {
+            return setting;
+        }
+    }
+    
+    return null;
+}
+
+function getTabNameColor(name, team, prefix, suffix, ip) {
+    return getNameColor(name, team, prefix, suffix, ip);
+}
+
+function getTabPrefix(name, team, originalPrefix, ip) {
+    return getPrefix(name, team, originalPrefix, ip);
+}
+
+function getTabSuffix(name, team, originalSuffix, ip) {
+    return getSuffix(name, team, originalSuffix, ip);
+}
+
+function getTabHeader(originalHeader, ip) {
+    return getHeader(originalHeader, ip);
+}
+
+function getTabFooter(originalFooter, ip) {
+    return getFooter(originalFooter, ip);
+}
+
+// ====== ИНИЦИАЛИЗАЦИЯ ======
+console.log("[API.mmutils] Script loaded successfully");
+console.log("[API.mmutils] Users registered: " + users.keys().length);
+console.log("[API.mmutils] Servers configured: " + serverConfig.keys().length);

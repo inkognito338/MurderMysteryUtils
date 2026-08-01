@@ -1,0 +1,11 @@
+[
+  {
+    "modid": "murdermysteryutils",
+    "name": "MurderMysteryUtils",
+    "description": "Utility mod for Murder Mystery: ESP, HUD, Tracers, NameTags, AutoNext and more.\n\nМод для Murder Mystery: ESP, HUD, Tracers, NameTags, AutoNext и другие модули.",
+    "version": "${version}",
+    "mcversion": "1.12.2",
+    "url": "https://github.com/inkognito338/MurderMysteryUtils",
+    "authorList": ["inkognito338"]
+  }
+]

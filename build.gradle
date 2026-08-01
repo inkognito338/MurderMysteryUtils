@@ -1,0 +1,184 @@
+import java.security.cert.CertificateFactory
+
+buildscript {
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        maven { url = 'https://repo.spongepowered.org/maven' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:3.+'
+        classpath 'org.spongepowered:mixingradle:0.7-SNAPSHOT'
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle'
+apply plugin: 'org.spongepowered.mixin'
+apply plugin: 'eclipse'
+apply plugin: 'maven-publish'
+
+version = '3.0'
+group = 'real.inkognito338.murdermysteryutils'
+archivesBaseName = 'MurderMysteryUtils'
+
+sourceCompatibility = targetCompatibility = compileJava.sourceCompatibility = compileJava.targetCompatibility = '1.8'
+
+minecraft {
+    mappings channel: 'snapshot', version: '20171003-1.12'
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'SCAN,REGISTRIES,REGISTRYDUMP'
+            property 'forge.logging.console.level', 'debug'
+            property 'fml.coreMods.load', 'real.inkognito338.murdermysteryutils.mixin.MixinLoader'
+            arg '-torg.spongepowered.asm.launch.MixinTweaker'
+        }
+        server {
+            property 'forge.logging.markers', 'SCAN,REGISTRIES,REGISTRYDUMP'
+            property 'forge.logging.console.level', 'debug'
+            property 'fml.coreMods.load', 'real.inkognito338.murdermysteryutils.mixin.MixinLoader'
+        }
+    }
+}
+
+repositories {
+    maven { url = 'https://repo.spongepowered.org/maven' }
+    maven { url = 'https://jitpack.io' }
+    mavenCentral()
+}
+
+def certsDir = file('src/main/resources/assets/murdermysteryutils/certs')
+
+tasks.register('downloadCerts') {
+    group = 'build'
+    description = 'Downloads Let\'s Encrypt root CA certificates, replacing expired ones'
+
+    doLast {
+        certsDir.mkdirs()
+
+        def certs = [
+                'isrgrootx1.pem'  : 'https://letsencrypt.org/certs/isrgrootx1.pem',
+                'isrg-root-x2.pem': 'https://letsencrypt.org/certs/isrg-root-x2.pem',
+        ]
+
+        def cf = CertificateFactory.getInstance('X.509')
+
+        certs.each { fileName, url ->
+            def dest = new File(certsDir, fileName)
+            def needsUpdate = true
+
+            if (dest.exists()) {
+                try {
+                    def cert = dest.withInputStream { cf.generateCertificate(it) as java.security.cert.X509Certificate }
+                    cert.checkValidity()
+                    println "[downloadCerts] OK (expires ${cert.notAfter}): $fileName"
+                    needsUpdate = false
+                } catch (java.security.cert.CertificateExpiredException e) {
+                    println "[downloadCerts] Expired — replacing: $fileName"
+                } catch (Exception e) {
+                    println "[downloadCerts] Invalid (${e.message}) — replacing: $fileName"
+                }
+            } else {
+                println "[downloadCerts] Missing — downloading: $fileName"
+            }
+
+            if (needsUpdate) {
+                new URL(url).withInputStream { dest.bytes = it.bytes }
+                println "[downloadCerts] Saved: $fileName"
+            }
+        }
+    }
+}
+
+processResources.dependsOn downloadCerts
+compileJava.dependsOn downloadCerts
+
+configurations {
+    embed
+    implementation.extendsFrom(embed)
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.12.2-14.23.5.2860'
+
+    embed('org.spongepowered:mixin:0.8.3') {
+        exclude module: 'guava'
+        exclude module: 'gson'
+        exclude module: 'commons-io'
+    }
+
+    // OkHttp 4.12.0 (без CVE, последняя для Java 8)
+    embed('com.squareup.okhttp3:okhttp:4.12.0')
+
+    embed 'org.jetbrains.kotlin:kotlin-stdlib:2.2.21'
+//    embed('com.github.MinnDevelopment:java-discord-rpc:v2.0.1')
+//    embed('com.github.JnCrMx:discord-game-sdk4j:v0.5.4')
+    embed('io.github.CDAGaming:DiscordIPC:0.10.2')
+    embed('org.mozilla:rhino:1.7.15.1')
+
+    // Source: https://mvnrepository.com/artifact/org.luaj/luaj-jse
+    embed("org.luaj:luaj-jse:3.0.1")
+
+    // Source: https://mvnrepository.com/artifact/org.java-websocket/Java-WebSocket
+    embed("org.java-websocket:Java-WebSocket:1.6.0")
+
+}
+
+mixin {
+    add sourceSets.main, "mixins.murdermysteryutils.refmap.json"
+}
+
+jar {
+    from {
+        configurations.embed.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude 'META-INF/*.RSA'
+        exclude 'META-INF/*.SF'
+        exclude 'META-INF/*.DSA'
+        exclude 'META-INF/maven/**'
+        exclude 'LICENSE.txt'
+        exclude '**/module-info.class'
+        exclude 'META-INF/versions/**'
+    }
+
+    from(projectDir) {
+        include 'LICENSE'
+        into ''
+    }
+
+    manifest {
+        attributes(
+                'FMLCorePlugin': 'real.inkognito338.murdermysteryutils.mixin.MixinLoader',
+                'FMLCorePluginContainsFMLMod': 'true',
+                'ForceLoadAsMod': 'true',
+                'TweakClass': 'org.spongepowered.asm.launch.MixinTweaker',
+                'TweakOrder': '0',
+                'MixinConfigs': 'mixins.murdermysteryutils.json'
+        )
+    }
+}
+
+jar.finalizedBy('reobfJar')
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching(['mcmod.info']) {
+        expand "version": project.version
+    }
+}
+
+
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifact jar
+        }
+    }
+    repositories {
+        maven {
+            url "file:///${project.projectDir}/mcmodsrepo"
+        }
+    }
+}
