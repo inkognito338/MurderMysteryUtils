@@ -29,6 +29,7 @@ import real.inkognito338.murdermysteryutils.utils.settings.SettingType;
  * Author: inkognito338
  */
 
+@Deprecated
 @SuppressWarnings("SpellCheckingInspection")
 public class Spammer extends Module {
 

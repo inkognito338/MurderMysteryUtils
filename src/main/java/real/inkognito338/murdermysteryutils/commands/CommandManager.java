@@ -105,6 +105,8 @@ public class CommandManager extends CommandBase {
                 "Отправить сообщение в онлайн-чат");
         register("onlinechat", (args, source) -> new CmdOnlineChat().run(args, source),
                 "Отправить сообщение в онлайн-чат");
+        register("mirror", (args, source) -> new CmdMirror().run(args, source),
+                "Выбрать источник загрузки скриптов и проверки обновлений (GitHub/Codeberg/GitFlic)");
 
         register("help", this::handleHelp, "Показать список команд");
     }

@@ -2,6 +2,7 @@ package real.inkognito338.murdermysteryutils.modules;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.AbstractClientPlayer;
+import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.math.AxisAlignedBB;
@@ -13,6 +14,7 @@ import real.inkognito338.murdermysteryutils.utils.Module;
 import real.inkognito338.murdermysteryutils.utils.settings.Setting;
 import real.inkognito338.murdermysteryutils.utils.settings.SettingType;
 import real.inkognito338.murdermysteryutils.utils.MurderAPI;
+import real.inkognito338.murdermysteryutils.utils.PlayerListManager;
 
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
@@ -29,7 +31,6 @@ public class ESP extends Module {
 
     private final Minecraft mc = Minecraft.getMinecraft();
     private final MurderAPI murderAPI = MurderAPI.getInstance();
-
 
     public ESP() {
         super("ESP");
@@ -49,6 +50,13 @@ public class ESP extends Module {
         this.addSetting(new Setting("Detective Color", SettingType.COLOR, new float[]{0.0f, 0.0f, 1.0f}));
         this.addSetting(new Setting("Innocent Color", SettingType.COLOR, new float[]{0.0f, 1.0f, 0.0f}));
         this.addSetting(new Setting("NPC Color", SettingType.COLOR, new float[]{0.3f, 0.8f, 1.0f}));
+
+        // ── Friend indicator ────────────────────────────────────────────
+        // "Outline"  — доп. рамка поверх обычного ESP-бокса роли (роль остаётся видна по цвету).
+        // "Priority" — друг рендерится обычным ESP (тем же Mode: Box/Outline/Shader),
+        //              но вместо цвета роли используется цвет друга — друг визуально выше любой роли.
+        this.addSetting(new Setting("Friend Indicator", SettingType.MODE, "Outline", "None", "Outline", "Priority"));
+        this.addSetting(new Setting("Friend Color", SettingType.COLOR, new float[]{1.0f, 1.0f, 0.0f}));
     }
 
     @Override
@@ -83,6 +91,9 @@ public class ESP extends Module {
         float[] innocentColor = (float[]) getSettingByName("Innocent Color").getValue();
         float[] npcColor = (float[]) getSettingByName("NPC Color").getValue();
 
+        String friendIndicator = (String) getSettingByName("Friend Indicator").getValue();
+        float[] friendColor = (float[]) getSettingByName("Friend Color").getValue();
+
         GlStateManager.pushMatrix();
         GlStateManager.pushAttrib();
 
@@ -111,7 +122,8 @@ public class ESP extends Module {
 
             if (isNPC) {
                 if (npcESP) {
-                    drawEntityBodyESP(player, npcColor[0], npcColor[1], npcColor[2], fade, mode, partialTicks);
+                    drawEntityBodyESP(player, npcColor[0], npcColor[1], npcColor[2], fade, mode, partialTicks,
+                            false, "None", friendColor);
                 }
                 continue;
             }
@@ -122,21 +134,28 @@ public class ESP extends Module {
             String role = getPlayerRole(player);
             if (!shouldShowPlayer(role, showMode)) continue;
 
+            boolean isFriend = PlayerListManager.isFriend(player.getName());
+
             float r, g, b;
-            switch (role) {
-                case "murderer":
-                    r = murdererColor[0]; g = murdererColor[1]; b = murdererColor[2];
-                    break;
-                case "detective":
-                    r = detectiveColor[0]; g = detectiveColor[1]; b = detectiveColor[2];
-                    break;
-                case "innocent":
-                default:
-                    r = innocentColor[0]; g = innocentColor[1]; b = innocentColor[2];
-                    break;
+            if (isFriend && "Priority".equals(friendIndicator)) {
+                // друг важнее роли — используем его цвет вместо цвета роли
+                r = friendColor[0]; g = friendColor[1]; b = friendColor[2];
+            } else {
+                switch (role) {
+                    case "murderer":
+                        r = murdererColor[0]; g = murdererColor[1]; b = murdererColor[2];
+                        break;
+                    case "detective":
+                        r = detectiveColor[0]; g = detectiveColor[1]; b = detectiveColor[2];
+                        break;
+                    case "innocent":
+                    default:
+                        r = innocentColor[0]; g = innocentColor[1]; b = innocentColor[2];
+                        break;
+                }
             }
 
-            drawEntityBodyESP(player, r, g, b, fade, mode, partialTicks);
+            drawEntityBodyESP(player, r, g, b, fade, mode, partialTicks, isFriend, friendIndicator, friendColor);
         }
 
         GlStateManager.enableTexture2D();
@@ -192,7 +211,8 @@ public class ESP extends Module {
         }
     }
 
-    private void drawEntityBodyESP(EntityPlayer player, float red, float green, float blue, boolean fade, String mode, float partialTicks) {
+    private void drawEntityBodyESP(EntityPlayer player, float red, float green, float blue, boolean fade, String mode,
+                                   float partialTicks, boolean isFriend, String friendIndicator, float[] friendColor) {
         if (player == null || player.equals(mc.player) || player.isDead || !player.isEntityAlive()) return;
 
         double x = player.lastTickPosX + (player.posX - player.lastTickPosX) * partialTicks - mc.getRenderManager().viewerPosX;
@@ -210,6 +230,9 @@ public class ESP extends Module {
                 0.5, player.height + 0.4, 0.5
         );
 
+        // ── Основной ESP-бокс ─────────────────────────────────────────────
+        // Цвет (red, green, blue) уже учитывает приоритет друга над ролью,
+        // если Friend Indicator == "Priority" (см. renderMurderMysteryESP).
         switch (mode) {
             case "Box":
                 drawOutlinedBoundingBox(bb, red, green, blue, alpha);
@@ -223,11 +246,32 @@ public class ESP extends Module {
                 break;
         }
 
+        // ── Индикатор друга: доп. рамка (не заменяет бокс, а дополняет) ──
+        // При "Priority" отдельная рамка не нужна — цвет друга уже применён к самому боксу.
+        if (isFriend && "Outline".equals(friendIndicator)) {
+            drawFriendOutline(bb, friendColor);
+        }
+
         GlStateManager.popMatrix();
+    }
+
+    // ── Доп. рамка вокруг бокса для режима "Outline" ────────────────────
+    private void drawFriendOutline(AxisAlignedBB bb, float[] friendColor) {
+        double grow = 0.05;
+        AxisAlignedBB outerBb = bb.grow(grow);
+        GlStateManager.color(friendColor[0], friendColor[1], friendColor[2], 1.0f);
+        GL11.glLineWidth(3.0f);
+        drawOutlinedBoundingBoxNoColor(outerBb);
+        GL11.glLineWidth((float) (double) getSettingByName("Line Width").getValue());
     }
 
     private void drawOutlinedBoundingBox(AxisAlignedBB bb, float red, float green, float blue, float alpha) {
         GlStateManager.color(red, green, blue, alpha);
+        drawOutlinedBoundingBoxNoColor(bb);
+    }
+
+    // Версия без установки цвета — чтобы можно было переиспользовать с уже выставленным GlStateManager.color(...)
+    private void drawOutlinedBoundingBoxNoColor(AxisAlignedBB bb) {
         GL11.glBegin(GL11.GL_LINES);
 
         GL11.glVertex3d(bb.minX, bb.minY, bb.minZ); GL11.glVertex3d(bb.maxX, bb.minY, bb.minZ);

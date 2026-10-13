@@ -1,10 +1,11 @@
 package real.inkognito338.murdermysteryutils.utils;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.Style;
 import net.minecraft.util.text.TextComponentString;
+import net.minecraft.util.text.TextFormatting;
 import net.minecraft.util.text.event.ClickEvent;
+import net.minecraft.util.text.event.HoverEvent;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -17,8 +18,8 @@ import java.util.regex.Pattern;
 
 public class UpdateChecker {
 
-    private static final AtomicBoolean hasNotified = new AtomicBoolean(false);
-    private static final AtomicBoolean isProcessing = new AtomicBoolean(false);
+    private static final AtomicBoolean updateNotified = new AtomicBoolean(false);
+    private static final AtomicBoolean mirrorNotified = new AtomicBoolean(false);
 
     private static final Pattern URL_PATTERN = Pattern.compile(
             "(https?://[\\w\\-.]+\\.[a-zA-Z]{2,}(?:/[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]*)?)"
@@ -26,17 +27,43 @@ public class UpdateChecker {
 
     private static final String DEFAULT_LANG = "ru";
 
-    public static void checkUpdate() {
-        API.checkUpdate();
-    }
-
     public static boolean isUpdateSuccess() {
         return API.isUpdateCheckSuccess();
     }
 
+    // ================= Вызывается из API после завершения загрузки =================
+
+    /**
+     * Вызывается из API.init() / API.reloadFromCurrentMirror() после того, как
+     * обе загрузки завершились. Ставит нужные уведомления в очередь Main —
+     * тик доставит их игроку, когда mc.player станет доступен.
+     */
+    public static void onInitLoadFinished() {
+        if (API.isMirrorLoadFailed() && mirrorNotified.compareAndSet(false, true)) {
+            Main.enqueueMessage(buildMirrorFailedNotice());
+        }
+
+        if (API.isUpdateScriptLoaded()) {
+            checkStaticState();
+            enqueueUpdateNotice();
+        }
+
+        Main.refreshUpdateState();
+    }
+
+    /**
+     * Сбрасывает флаги уведомлений при смене зеркала, чтобы после перезагрузки
+     * уведомления появились снова (если новое зеркало тоже не ответит).
+     */
+    public static void resetNotifyFlags() {
+        updateNotified.set(false);
+        mirrorNotified.set(false);
+    }
+
+    // ================= Логика проверок =================
+
     private static void checkStaticState() {
         if (!API.isUpdateScriptLoaded()) return;
-
         try {
             if (API.checkAndKick()) {
                 syncStaticState();
@@ -45,16 +72,9 @@ public class UpdateChecker {
         } catch (Exception ignored) {}
     }
 
-    private static void checkUpdates() {
+    private static void enqueueUpdateNotice() {
         if (!API.isUpdateScriptLoaded()) return;
-
-        // Проверяем, не было ли уже уведомления
-        if (hasNotified.get()) return;
-
-        // Блокируем выполнение, чтобы предотвратить одновременные вызовы
-        if (!isProcessing.compareAndSet(false, true)) {
-            return;
-        }
+        if (!updateNotified.compareAndSet(false, true)) return;
 
         try {
             String[] info = API.getUpdateInfo();
@@ -65,51 +85,68 @@ public class UpdateChecker {
             String latest = info[2];
             String downloadUrl = info[3];
 
-            String message;
-            if (isOutdated) {
-                message = API.getUpdateMessage(DEFAULT_LANG, current, latest, downloadUrl);
-            } else {
-                message = API.getUptodateMessage(DEFAULT_LANG);
-            }
+            String message = isOutdated
+                    ? API.getUpdateMessage(DEFAULT_LANG, current, latest, downloadUrl)
+                    : API.getUptodateMessage(DEFAULT_LANG);
 
-            sendMessageWithRetry(message, 10);
-        } catch (Exception ignored) {} finally {
-            isProcessing.set(false);
-        }
+            if (message != null && !message.isEmpty()) {
+                Main.enqueueMessage(buildUrlComponent(message));
+            }
+        } catch (Exception ignored) {}
     }
 
-    private static void sendMessageWithRetry(String message, int attemptsLeft) {
-        if (message == null || message.isEmpty()) return;
+    // ================= Построение компонентов =================
 
-        // Устанавливаем флаг перед отправкой
-        if (!hasNotified.compareAndSet(false, true)) {
-            return; // Уже отправлено
-        }
+    /**
+     * Уведомление о недоступности зеркала с кликабельными кнопками.
+     * Оформлено в несколько строк (с пустыми строками сверху/снизу) для читаемости в чате.
+     */
+    private static ITextComponent buildMirrorFailedNotice() {
+        String currentMirrorName = MirrorManager.getCurrent().displayName;
 
-        new Thread(() -> {
-            try {
-                Thread.sleep(500);
+        ITextComponent root = new TextComponentString("§7 \n");
 
-                Minecraft mc = Minecraft.getMinecraft();
-                if (mc.player != null) {
-                    mc.player.sendMessage(buildComponent(message));
-                } else if (attemptsLeft > 1) {
-                    // Если игрок еще не инициализирован, сбрасываем флаг и пробуем снова
-                    hasNotified.set(false);
-                    sendMessageWithRetry(message, attemptsLeft - 1);
-                } else {
-                    // Если не удалось отправить, сбрасываем флаг
-                    hasNotified.set(false);
-                }
-            } catch (InterruptedException ignored) {
-                hasNotified.set(false);
-            }
-        }, "UpdateChecker-SendMessage").start();
+        root.appendSibling(new TextComponentString(
+                "§7[§6" + Main.NAME + "§7] §cНе удалось загрузить скрипты с §e"
+                        + currentMirrorName + "§c.\n"
+        ));
+
+        root.appendSibling(new TextComponentString(
+                "§7Провайдер может блокировать доступ. Выберите другой источник:\n"
+        ));
+
+        ITextComponent autoBtn = new TextComponentString("§7[§a.mirror auto§7]");
+        autoBtn.setStyle(new Style()
+                .setColor(TextFormatting.GREEN)
+                .setClickEvent(new ClickEvent(
+                        ClickEvent.Action.RUN_COMMAND,
+                        "/mmutils mirror auto"))
+                .setHoverEvent(new HoverEvent(
+                        HoverEvent.Action.SHOW_TEXT,
+                        new TextComponentString("§aАвтоматически подобрать\n§7наилучшее доступное зеркало"))));
+
+        ITextComponent listBtn = new TextComponentString(" §7[§e.mirror list§7]");
+        listBtn.setStyle(new Style()
+                .setColor(TextFormatting.YELLOW)
+                .setClickEvent(new ClickEvent(
+                        ClickEvent.Action.RUN_COMMAND,
+                        "/mmutils mirror list"))
+                .setHoverEvent(new HoverEvent(
+                        HoverEvent.Action.SHOW_TEXT,
+                        new TextComponentString("§eПоказать все зеркала\n§7с проверкой доступности"))));
+
+        root.appendSibling(autoBtn);
+        root.appendSibling(listBtn);
+        root.appendSibling(new TextComponentString("\n§7 "));
+
+        return root;
     }
 
-    private static ITextComponent buildComponent(String rawMessage) {
+    /**
+     * Строит ITextComponent, превращая http/https-ссылки в кликабельные компоненты.
+     */
+    private static ITextComponent buildUrlComponent(String rawMessage) {
         String formatted = rawMessage.replace('&', '§');
-
         Matcher matcher = URL_PATTERN.matcher(formatted);
 
         ITextComponent root = new TextComponentString("");
@@ -120,14 +157,15 @@ public class UpdateChecker {
             if (!before.isEmpty()) {
                 root.appendSibling(new TextComponentString(before));
             }
-
             String url = matcher.group(1);
-            ITextComponent linkComponent = new TextComponentString(url);
-            linkComponent.setStyle(new Style()
+            ITextComponent link = new TextComponentString(url);
+            link.setStyle(new Style()
                     .setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, url))
+                    .setHoverEvent(new HoverEvent(
+                            HoverEvent.Action.SHOW_TEXT,
+                            new TextComponentString("§7Открыть ссылку")))
                     .setUnderlined(true));
-            root.appendSibling(linkComponent);
-
+            root.appendSibling(link);
             lastEnd = matcher.end();
         }
 
@@ -135,14 +173,14 @@ public class UpdateChecker {
         if (!tail.isEmpty()) {
             root.appendSibling(new TextComponentString(tail));
         }
-
         return root;
     }
+
+    // ================= Chat processing =================
 
     private static void processChatMessage(String message) {
         if (message == null || message.isEmpty()) return;
         if (!API.isUpdateScriptLoaded()) return;
-
         try {
             if (API.onChatMessage(message)) {
                 syncStaticState();
@@ -160,23 +198,23 @@ public class UpdateChecker {
         MinecraftForge.EVENT_BUS.register(new Handler());
     }
 
+    // ================= Handler =================
+
     public static class Handler {
 
         @SubscribeEvent
         public void onServerConnect(FMLNetworkEvent.ClientConnectedToServerEvent event) {
-            // Сбрасываем флаги при новом подключении
-            hasNotified.set(false);
-            isProcessing.set(false);
+            // Сбрасываем флаги уведомлений при каждом новом подключении к серверу,
+            // чтобы уведомление об обновлении/недоступности зеркала отправлялось заново.
+            resetNotifyFlags();
 
-            new Thread(() -> {
-                boolean loaded = API.awaitUpdateScriptLoaded(10);
-                if (!loaded) {
-                    return;
-                }
+            if (API.isMirrorLoadFailed() && mirrorNotified.compareAndSet(false, true)) {
+                Main.enqueueMessage(buildMirrorFailedNotice());
+            }
 
-                checkStaticState();
-                checkUpdates();
-            }, "UpdateChecker-OnConnect").start();
+            if (API.isUpdateScriptLoaded()) {
+                enqueueUpdateNotice();
+            }
         }
 
         @SubscribeEvent

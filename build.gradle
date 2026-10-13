@@ -17,7 +17,7 @@ apply plugin: 'org.spongepowered.mixin'
 apply plugin: 'eclipse'
 apply plugin: 'maven-publish'
 
-version = '3.0'
+version = '3.1'
 group = 'real.inkognito338.murdermysteryutils'
 archivesBaseName = 'MurderMysteryUtils'
 

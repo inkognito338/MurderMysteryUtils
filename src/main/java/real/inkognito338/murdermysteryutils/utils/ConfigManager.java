@@ -84,6 +84,7 @@ public class ConfigManager {
 
         json.addProperty("staticItems", staticItems);
         json.addProperty("theme", currentThemeName); // Изменено с theme.name() на строку
+        json.addProperty("mirror", MirrorManager.getCurrent().id);
 
         JsonObject modulesObj = new JsonObject();
         for (Module module : ModuleManager.getModules()) {
@@ -185,6 +186,16 @@ public class ConfigManager {
                 ThemeManager.loadThemeByName("Midnight");
             }
 
+            if (json.has("mirror")) {
+                String mirrorId = json.get("mirror").getAsString();
+                MirrorManager.Mirror mirror = MirrorManager.Mirror.byId(mirrorId);
+                if (mirror != null) {
+                    MirrorManager.setCurrent(mirror);
+                }
+            } else {
+                // на случай старого конфига без поля mirror
+            }
+
             if (json.has("modules")) {
                 JsonObject modulesObj = json.getAsJsonObject("modules");
                 for (Module module : ModuleManager.getModules()) {
@@ -212,6 +223,9 @@ public class ConfigManager {
                                             value = element.getAsDouble();
                                             break;
                                         case MODE:
+                                            value = element.getAsString();
+                                            break;
+                                        case TEXT:
                                             value = element.getAsString();
                                             break;
                                         case COLOR:

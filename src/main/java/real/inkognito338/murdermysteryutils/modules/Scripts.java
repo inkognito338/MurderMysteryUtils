@@ -42,8 +42,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import java.util.jar.JarFile;
 import java.util.jar.JarEntry;
@@ -79,6 +82,14 @@ public class Scripts extends Module {
     private final Map<String, List<ScriptListener>> eventListeners = new ConcurrentHashMap<>();
     private final ThreadLocal<String> currentScript = new ThreadLocal<>();
 
+    // ── Реестр таймеров (setTimeout/setInterval), привязанных к скрипту ──
+    // Ключ: имя скрипта (файл). Значение: набор активных таймеров этого скрипта.
+    // Нужен, чтобы при disableScript/reload/remove можно было гарантированно
+    // отменить ВСЕ таймеры скрипта, а не полагаться на то, что JS сам вызовет clearTimeout.
+    private final Map<String, Set<ScriptTimer>> scriptTimers = new ConcurrentHashMap<>();
+    private final AtomicLong timerIdGenerator = new AtomicLong(0);
+    private volatile ScheduledExecutorService timerExecutor;
+
     private ScriptableObject globalScope;
     private ApiBridge apiBridge;
     private ConsoleBridge consoleBridge;
@@ -97,6 +108,11 @@ public class Scripts extends Module {
         scriptsPath = Paths.get(Minecraft.getMinecraft().mcDataDir.getAbsolutePath(),
                 "MurderMysteryUtils", SCRIPTS_DIR);
         scriptExecutor = Executors.newCachedThreadPool();
+        timerExecutor = Executors.newScheduledThreadPool(2, r -> {
+            Thread t = new Thread(r, "MMU-Scripts-Timer");
+            t.setDaemon(true);
+            return t;
+        });
         initJsEngine();
         scanScripts();
         updateScriptsList();
@@ -119,6 +135,10 @@ public class Scripts extends Module {
     public void onDisable() {
         removePacketHandler();
         MinecraftForge.EVENT_BUS.unregister(this);
+        // При выключении всего модуля глушим ВСЕ таймеры всех скриптов,
+        // а не только слушателей событий — иначе setTimeout/setInterval
+        // продолжат стрелять после onModuleDisable.
+        cancelAllTimers();
         triggerEvent("onModuleDisable");
         LOGGER.info("Scripts module disabled");
     }
@@ -323,6 +343,13 @@ public class Scripts extends Module {
         if (scriptExecutor.isShutdown()) {
             scriptExecutor = Executors.newCachedThreadPool();
         }
+        if (timerExecutor == null || timerExecutor.isShutdown()) {
+            timerExecutor = Executors.newScheduledThreadPool(2, r -> {
+                Thread t = new Thread(r, "MMU-Scripts-Timer");
+                t.setDaemon(true);
+                return t;
+            });
+        }
         try {
             // Создаем папку и копируем дефолтные скрипты (только если папки нет)
             createDefaultScripts();
@@ -359,87 +386,58 @@ public class Scripts extends Module {
         }
     }
 
+    /**
+     * setTimeout/setInterval теперь полностью управляются из Java (через api.__setTimeout/__setInterval/__clearTimer),
+     * а не через "var thread = new java.lang.Thread(...)" внутри самого JS-полифилла.
+     * Это единственный способ гарантированно отменить таймеры конкретного скрипта извне —
+     * раньше Java вообще не знала о существовании этих Thread'ов и не могла их остановить.
+     */
     private void addPolyfills(Context ctx, Scriptable scope) {
         try {
             String polyfills =
-                    "// setTimeout и setInterval (исправленная версия)\n" +
+                    "// setTimeout и setInterval — тонкие обёртки над Java api.__setTimeout/__setInterval.\n" +
+                            "// Вся логика планирования и отмены теперь в Java (ScriptTimer), привязана к имени скрипта,\n" +
+                            "// поэтому disableScript/reload гарантированно останавливают эти таймеры.\n" +
                             "var setTimeout = function(fn, delay) {\n" +
                             "    var args = Array.prototype.slice.call(arguments, 2);\n" +
-                            "    var timer = {\n" +
-                            "        id: java.lang.System.currentTimeMillis() + Math.random(),\n" +
-                            "        cancelled: false\n" +
-                            "    };\n" +
-                            "    \n" +
-                            "    var run = function() {\n" +
-                            "        if (!timer.cancelled) {\n" +
-                            "            try {\n" +
-                            "                if (typeof fn === 'string') {\n" +
-                            "                    eval(fn);\n" +
-                            "                } else if (typeof fn === 'function') {\n" +
-                            "                    fn.apply(null, args);\n" +
-                            "                }\n" +
-                            "            } catch(e) {\n" +
-                            "                console.error('setTimeout error:', e);\n" +
+                            "    var wrapped = function() {\n" +
+                            "        try {\n" +
+                            "            if (typeof fn === 'string') {\n" +
+                            "                eval(fn);\n" +
+                            "            } else if (typeof fn === 'function') {\n" +
+                            "                fn.apply(null, args);\n" +
                             "            }\n" +
+                            "        } catch(e) {\n" +
+                            "            console.error('setTimeout error:', e);\n" +
                             "        }\n" +
                             "    };\n" +
-                            "    \n" +
                             "    if (delay === undefined) delay = 0;\n" +
-                            "    var thread = new java.lang.Thread(function() {\n" +
-                            "        java.lang.Thread.sleep(delay);\n" +
-                            "        run();\n" +
-                            "    });\n" +
-                            "    thread.start();\n" +
-                            "    return timer;\n" +
+                            "    return api.__setTimeout(wrapped, delay);\n" +
                             "};\n" +
                             "\n" +
-                            "var clearTimeout = function(timer) {\n" +
-                            "    if (timer && timer.cancelled !== undefined) {\n" +
-                            "        timer.cancelled = true;\n" +
-                            "    }\n" +
+                            "var clearTimeout = function(id) {\n" +
+                            "    api.__clearTimer(id);\n" +
                             "};\n" +
                             "\n" +
                             "var setInterval = function(fn, interval) {\n" +
                             "    var args = Array.prototype.slice.call(arguments, 2);\n" +
-                            "    var timer = {\n" +
-                            "        id: java.lang.System.currentTimeMillis() + Math.random(),\n" +
-                            "        cancelled: false\n" +
-                            "    };\n" +
-                            "    \n" +
-                            "    var run = function() {\n" +
-                            "        if (!timer.cancelled) {\n" +
-                            "            try {\n" +
-                            "                if (typeof fn === 'string') {\n" +
-                            "                    eval(fn);\n" +
-                            "                } else if (typeof fn === 'function') {\n" +
-                            "                    fn.apply(null, args);\n" +
-                            "                }\n" +
-                            "            } catch(e) {\n" +
-                            "                console.error('setInterval error:', e);\n" +
+                            "    var wrapped = function() {\n" +
+                            "        try {\n" +
+                            "            if (typeof fn === 'string') {\n" +
+                            "                eval(fn);\n" +
+                            "            } else if (typeof fn === 'function') {\n" +
+                            "                fn.apply(null, args);\n" +
                             "            }\n" +
-                            "            if (!timer.cancelled) {\n" +
-                            "                var thread = new java.lang.Thread(function() {\n" +
-                            "                    java.lang.Thread.sleep(interval);\n" +
-                            "                    run();\n" +
-                            "                });\n" +
-                            "                thread.start();\n" +
-                            "            }\n" +
+                            "        } catch(e) {\n" +
+                            "            console.error('setInterval error:', e);\n" +
                             "        }\n" +
                             "    };\n" +
-                            "    \n" +
                             "    if (interval === undefined) interval = 0;\n" +
-                            "    var thread = new java.lang.Thread(function() {\n" +
-                            "        java.lang.Thread.sleep(interval);\n" +
-                            "        run();\n" +
-                            "    });\n" +
-                            "    thread.start();\n" +
-                            "    return timer;\n" +
+                            "    return api.__setInterval(wrapped, interval);\n" +
                             "};\n" +
                             "\n" +
-                            "var clearInterval = function(timer) {\n" +
-                            "    if (timer && timer.cancelled !== undefined) {\n" +
-                            "        timer.cancelled = true;\n" +
-                            "    }\n" +
+                            "var clearInterval = function(id) {\n" +
+                            "    api.__clearTimer(id);\n" +
                             "};\n" +
                             "\n" +
                             "// Array полифиллы\n" +
@@ -596,6 +594,142 @@ public class Scripts extends Module {
             ctx.evaluateString(scope, polyfills, "polyfills", 1, null);
         } catch (Exception e) {
             LOGGER.error("Failed to add polyfills", e);
+        }
+    }
+
+    // ============================================================
+    // ТАЙМЕРЫ (setTimeout/setInterval), привязанные к скрипту
+    // ============================================================
+
+    /**
+     * Обёртка над запланированной задачей. Хранит имя скрипта-владельца,
+     * ScheduledFuture (для реальной отмены в планировщике) и флаг cancelled
+     * (для доп. защиты, если future уже начал выполняться).
+     */
+    private final class ScriptTimer {
+        final long id;
+        final String scriptName;
+        final boolean repeating;
+        volatile ScheduledFuture<?> future;
+        final AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        ScriptTimer(long id, String scriptName, boolean repeating) {
+            this.id = id;
+            this.scriptName = scriptName;
+            this.repeating = repeating;
+        }
+
+        void cancel() {
+            if (cancelled.compareAndSet(false, true)) {
+                ScheduledFuture<?> f = future;
+                if (f != null) {
+                    f.cancel(false);
+                }
+            }
+        }
+
+        boolean isCancelled() {
+            return cancelled.get();
+        }
+    }
+
+    private void registerTimer(ScriptTimer timer) {
+        scriptTimers.computeIfAbsent(timer.scriptName, k -> ConcurrentHashMap.newKeySet()).add(timer);
+    }
+
+    private void unregisterTimer(ScriptTimer timer) {
+        Set<ScriptTimer> set = scriptTimers.get(timer.scriptName);
+        if (set != null) {
+            set.remove(timer);
+        }
+    }
+
+    /** Отменяет и вычищает все таймеры конкретного скрипта. Вызывается при disable/remove/reload. */
+    private void cancelTimersForScript(String scriptName) {
+        Set<ScriptTimer> set = scriptTimers.remove(scriptName);
+        if (set == null) return;
+        for (ScriptTimer timer : set) {
+            timer.cancel();
+        }
+    }
+
+    /** Отменяет вообще все таймеры всех скриптов. Вызывается при onDisable модуля и полном shutdown. */
+    private void cancelAllTimers() {
+        for (String scriptName : new ArrayList<>(scriptTimers.keySet())) {
+            cancelTimersForScript(scriptName);
+        }
+    }
+
+    private long scheduleTimeout(Function callback, long delayMs, String scriptName) {
+        long id = timerIdGenerator.incrementAndGet();
+        ScriptTimer timer = new ScriptTimer(id, scriptName, false);
+        registerTimer(timer);
+
+        Runnable task = () -> {
+            try {
+                runTimerCallback(timer, callback);
+            } finally {
+                unregisterTimer(timer);
+            }
+        };
+
+        if (timerExecutor == null || timerExecutor.isShutdown()) {
+            unregisterTimer(timer);
+            return id;
+        }
+        timer.future = timerExecutor.schedule(task, Math.max(0, delayMs), TimeUnit.MILLISECONDS);
+        return id;
+    }
+
+    private long scheduleInterval(Function callback, long intervalMs, String scriptName) {
+        long id = timerIdGenerator.incrementAndGet();
+        ScriptTimer timer = new ScriptTimer(id, scriptName, true);
+        registerTimer(timer);
+
+        long safeInterval = Math.max(1, intervalMs);
+
+        if (timerExecutor == null || timerExecutor.isShutdown()) {
+            unregisterTimer(timer);
+            return id;
+        }
+
+        timer.future = timerExecutor.scheduleAtFixedRate(
+                () -> runTimerCallback(timer, callback),
+                safeInterval, safeInterval, TimeUnit.MILLISECONDS
+        );
+        return id;
+    }
+
+    /**
+     * Выполняет колбэк таймера, но ТОЛЬКО если:
+     *  - таймер ещё не отменён явно (clearTimeout/clearInterval),
+     *  - модуль всё ещё включён (isToggled()),
+     *  - скрипт, которому принадлежит таймер, всё ещё включён (isScriptEnabled()).
+     * Это и есть основное исправление бага: раньше setTimeout/setInterval были
+     * чистым JS-полифиллом на "голых" Java-потоках, о которых Java-сторона ничего
+     * не знала и не могла их остановить при выключении скрипта или модуля.
+     */
+    private void runTimerCallback(ScriptTimer timer, Function callback) {
+        if (timer.isCancelled()) return;
+        if (!isToggled() || !jsInitialized) return;
+        if (!isScriptEnabled(timer.scriptName)) return;
+
+        boolean enteredHere = Context.getCurrentContext() == null;
+        Context ctx = enteredHere ? Context.enter() : Context.getCurrentContext();
+        String previousScript = currentScript.get();
+        currentScript.set(timer.scriptName);
+        try {
+            callback.call(ctx, globalScope, globalScope, new Object[0]);
+        } catch (RhinoException re) {
+            String msg = describeRhinoError(re);
+            LOGGER.error("Error in timer callback ({}): {}", timer.scriptName, msg);
+            sendSystemMessage("§c[Scripts] Ошибка таймера в " + timer.scriptName + ": " + msg);
+        } catch (Exception e) {
+            LOGGER.error("Error in timer callback: {}", timer.scriptName, e);
+        } finally {
+            if (previousScript == null) currentScript.remove();
+            else currentScript.set(previousScript);
+            if (enteredHere) Context.exit();
         }
     }
 
@@ -821,6 +955,42 @@ public class Scripts extends Module {
                 }
             } finally {
                 if (enteredHere) Context.exit();
+            }
+        }
+
+        // ── Таймеры: реальная имплементация setTimeout/setInterval/clear* ──
+        // JS-полифилл в addPolyfills() вызывает эти методы напрямую.
+        // currentScript.get() тут — имя скрипта, из которого был вызван setTimeout/setInterval,
+        // именно оно привязывается к таймеру и используется при disableScript/reload для отмены.
+
+        public double __setTimeout(Function callback, double delayMs) {
+            String scriptName = currentScript.get();
+            long id = scheduleTimeout(callback, (long) delayMs, scriptName);
+            return (double) id;
+        }
+
+        public double __setInterval(Function callback, double intervalMs) {
+            String scriptName = currentScript.get();
+            long id = scheduleInterval(callback, (long) intervalMs, scriptName);
+            return (double) id;
+        }
+
+        public void __clearTimer(Object idObj) {
+            if (idObj == null || idObj == Undefined.instance) return;
+            long id;
+            try {
+                id = (long) Context.toNumber(idObj);
+            } catch (Exception e) {
+                return;
+            }
+            for (Set<ScriptTimer> set : scriptTimers.values()) {
+                for (ScriptTimer timer : set) {
+                    if (timer.id == id) {
+                        timer.cancel();
+                        set.remove(timer);
+                        return;
+                    }
+                }
             }
         }
 
@@ -1284,6 +1454,10 @@ public class Scripts extends Module {
         for (List<ScriptListener> listeners : eventListeners.values()) {
             listeners.removeIf(l -> fileName.equals(l.scriptName));
         }
+        // Также глушим все активные setTimeout/setInterval этого скрипта —
+        // иначе они продолжат стрелять после reload/удаления скрипта,
+        // хотя все его обработчики событий уже сняты.
+        cancelTimersForScript(fileName);
     }
 
     private void loadScript(String fileName) {
@@ -1360,6 +1534,9 @@ public class Scripts extends Module {
         for (String script : loadedScripts.keySet()) {
             removeListenersForScript(script);
         }
+        // На всякий случай — вычищаем таймеры вообще всех скриптов (включая те,
+        // что могли быть удалены с диска между reload'ами, но чьи таймеры ещё тикали).
+        cancelAllTimers();
         loadedScripts.clear();
         scanScripts();
         updateScriptsList();
@@ -1377,6 +1554,11 @@ public class Scripts extends Module {
     private void disableScript(String fileName) {
         String name = normalizeScriptName(fileName);
         scriptEnabled.computeIfAbsent(name, k -> new AtomicBoolean(true)).set(false);
+        // Главное исправление: при выключении скрипта немедленно отменяем
+        // ВСЕ его активные setTimeout/setInterval. Раньше флаг enabled проверялся
+        // только внутри emit() для событий, а таймеры жили своей жизнью на отдельных
+        // Java-потоках, которые никак не были связаны с этим флагом.
+        cancelTimersForScript(name);
         updateScriptsList();
         triggerEvent("onScriptDisabled", name);
     }
@@ -1645,13 +1827,23 @@ public class Scripts extends Module {
     }
 
     public void shutdown() {
+        cancelAllTimers();
         scriptExecutor.shutdown();
+        if (timerExecutor != null) {
+            timerExecutor.shutdown();
+        }
         try {
             if (!scriptExecutor.awaitTermination(SHUTDOWN_AWAIT_SECONDS, TimeUnit.SECONDS)) {
                 scriptExecutor.shutdownNow();
             }
+            if (timerExecutor != null && !timerExecutor.awaitTermination(SHUTDOWN_AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                timerExecutor.shutdownNow();
+            }
         } catch (InterruptedException e) {
             scriptExecutor.shutdownNow();
+            if (timerExecutor != null) {
+                timerExecutor.shutdownNow();
+            }
             Thread.currentThread().interrupt();
         }
     }

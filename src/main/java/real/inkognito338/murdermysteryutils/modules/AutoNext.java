@@ -3,12 +3,14 @@ package real.inkognito338.murdermysteryutils.modules;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.network.play.server.SPacketChat;
 import net.minecraft.network.play.server.SPacketTitle;
 import net.minecraft.scoreboard.ScorePlayerTeam;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.common.network.FMLNetworkEvent;
@@ -83,6 +85,12 @@ public class AutoNext extends Module {
         MinecraftForge.EVENT_BUS.unregister(this);
         resetState();
         removeHandler();
+    }
+
+    @SubscribeEvent
+    public void onWorldJoin(EntityJoinWorldEvent event) {
+        if (!(event.getEntity() instanceof EntityPlayerSP)) return;
+        resetState();
     }
 
     private void resetState() {

@@ -1,9 +1,9 @@
 package real.inkognito338.murdermysteryutils.utils;
 
-import net.minecraft.client.Minecraft;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.network.FMLNetworkEvent;
+import net.minecraft.client.Minecraft;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -23,10 +23,6 @@ import java.util.concurrent.*;
 
 public class API {
 
-    private static final String API_SCRIPT_URL = "https://raw.githubusercontent.com/inkognito338/MurderMysteryUtils/main/API/API.lua";
-    private static final String AUTONEXT_SCRIPT_URL = "https://raw.githubusercontent.com/inkognito338/MurderMysteryUtils/main/API/AutoNext.lua";
-    private static final String CHECK_UPDATE_URL = "https://raw.githubusercontent.com/inkognito338/MurderMysteryUtils/refs/heads/main/API/check_update.lua";
-
     private static volatile OkHttpClient httpClient = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
@@ -41,13 +37,18 @@ public class API {
     private static String currentServerIP = "";
     private static volatile boolean chatIgnoreScriptLoaded = false;
 
+    /**
+     * true — хотя бы одна загрузка скриптов при старте или после смены зеркала
+     * завершилась ошибкой. Читается из UpdateChecker.onInitLoadFinished().
+     */
+    private static volatile boolean mirrorLoadFailed = false;
 
-
-    private static final CountDownLatch updateScriptLoadLatch = new CountDownLatch(1);
     private static volatile boolean updateCheckStarted = false;
 
     private static Globals globals;
     private static final ExecutorService executor = Executors.newCachedThreadPool();
+
+    // ================= SSL =================
 
     private static synchronized void rebuildClientWithFreshCerts() {
         try {
@@ -68,6 +69,8 @@ public class API {
         }
     }
 
+    // ================= Lua engine =================
+
     private static void initLuaEngine() {
         globals = new Globals();
 
@@ -79,11 +82,6 @@ public class API {
 
         org.luaj.vm2.compiler.LuaC.install(globals);
 
-        // Обнуляем доступ к функциям, позволяющим скрипту загружать
-        // и исполнять произвольный код в обход api-стола, либо читать
-        // файлы/модули с диска. PackageLib оставлена загруженной, т.к.
-        // StringLib внутренне зависит от таблицы package при инициализации —
-        // без этого падает "attempt to index ? (a nil value)" в StringLib.call.
         globals.set("load", LuaValue.NIL);
         globals.set("loadstring", LuaValue.NIL);
         globals.set("dofile", LuaValue.NIL);
@@ -197,15 +195,24 @@ public class API {
         globals.set("api", api);
     }
 
+    // ================= Флаги =================
+
+    public static boolean isMirrorLoadFailed() {
+        return mirrorLoadFailed;
+    }
+
+    static void resetMirrorState() {
+        mirrorLoadFailed = false;
+    }
+
+    // ================= HTTP =================
+
     public static boolean isLoaded() {
         return scriptLoaded;
     }
 
     public static void loadScript(String script) {
-        if (globals == null) {
-            initLuaEngine();
-        }
-
+        if (globals == null) initLuaEngine();
         try {
             globals.load(script).call();
             Main.LOGGER.info("[API] Script loaded successfully");
@@ -219,9 +226,8 @@ public class API {
     public static String httpGet(String url) throws IOException {
         Request request = new Request.Builder()
                 .url(url)
-                .header("User-Agent", Main.NAME + "/" + Main.VERSION)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " + Main.NAME + "/" + Main.VERSION)
                 .build();
-
         try {
             return executeGet(httpClient, request);
         } catch (SSLHandshakeException e) {
@@ -245,36 +251,47 @@ public class API {
         }
     }
 
+    // ================= Fetch основных скриптов =================
+
     public static void fetch() {
+        fetchInternal(null);
+    }
+
+    private static void fetchInternal(CountDownLatch doneLatch) {
         new Thread(() -> {
             try {
-                String mainScript = httpGet(API_SCRIPT_URL);
+                String apiUrl = MirrorManager.resolveUrl(MirrorManager.API_SCRIPT_PATH);
+                String mainScript = httpGet(apiUrl);
                 if (mainScript == null || mainScript.isEmpty()) {
-                    Main.LOGGER.warn("[API] Empty response from API");
+                    Main.LOGGER.warn("[API] Empty response from API (mirror: {}, url: {})",
+                            MirrorManager.getCurrent().id, apiUrl);
                     if (cachedScript != null && !cachedScript.isEmpty()) {
                         compileAndRunScript(cachedScript);
                         scriptLoaded = true;
                         Main.LOGGER.info("[API] Using cached script");
+                    } else {
+                        mirrorLoadFailed = true;
+                        Main.LOGGER.warn("[API] No cached script available, mirror marked as failed");
                     }
                     return;
                 }
 
-                String autoNextScript = httpGet(AUTONEXT_SCRIPT_URL);
+                String autoNextScript = httpGet(MirrorManager.resolveUrl(MirrorManager.AUTONEXT_SCRIPT_PATH));
                 if (autoNextScript == null || autoNextScript.isEmpty()) {
                     Main.LOGGER.warn("[API] AutoNext script not found, using embedded fallback");
                     autoNextScript = getFallbackAutoNextScript();
                 }
 
                 String fullScript = mainScript + "\n\n-- ====== AUTONEXT SCRIPT ======\n\n" + autoNextScript;
-
                 compileAndRunScript(fullScript);
                 cachedScript = fullScript;
                 scriptLoaded = true;
                 lastFetchTime = System.currentTimeMillis();
-                Main.LOGGER.info("[API] Scripts loaded successfully");
+                Main.LOGGER.info("[API] Scripts loaded successfully (mirror: {})", MirrorManager.getCurrent().id);
 
             } catch (Exception e) {
-                Main.LOGGER.error("[API] Failed to load script", e);
+                Main.LOGGER.error("[API] Failed to load script (mirror: {}, cause: {}: {})",
+                        MirrorManager.getCurrent().id, e.getClass().getSimpleName(), e.getMessage(), e);
                 if (cachedScript != null && !cachedScript.isEmpty()) {
                     try {
                         compileAndRunScript(cachedScript);
@@ -282,8 +299,13 @@ public class API {
                         Main.LOGGER.info("[API] Using cached script after error");
                     } catch (Exception ignored) {
                         Main.LOGGER.error("[API] Failed to load cached script", ignored);
+                        mirrorLoadFailed = true;
                     }
+                } else {
+                    mirrorLoadFailed = true;
                 }
+            } finally {
+                if (doneLatch != null) doneLatch.countDown();
             }
         }).start();
     }
@@ -322,26 +344,20 @@ public class API {
 
     private static void compileAndRunScript(String scriptCode) {
         try {
-            if (globals == null) {
-                initLuaEngine();
-            }
-
+            if (globals == null) initLuaEngine();
             globals.set("currentServerIP", LuaValue.valueOf(currentServerIP));
             globals.load(scriptCode).call();
-
             Main.LOGGER.info("[API] Script compiled and executed successfully");
-
         } catch (LuaError e) {
             Main.LOGGER.error("[API] Lua error: {}", e.getMessage());
             throw new RuntimeException(e);
         }
     }
 
-    public static LuaValue callFunction(String functionName, Object... args) {
-        if (!scriptLoaded || globals == null) {
-            return LuaValue.NIL;
-        }
+    // ================= Lua вызовы =================
 
+    public static LuaValue callFunction(String functionName, Object... args) {
+        if (!scriptLoaded || globals == null) return LuaValue.NIL;
         try {
             LuaValue func = globals.get(functionName);
             if (func.isnil()) {
@@ -367,7 +383,6 @@ public class API {
             }
 
             Future<Varargs> future = executor.submit(() -> func.invoke(LuaValue.varargsOf(luaArgs)));
-
             try {
                 Varargs result = future.get(5000, TimeUnit.MILLISECONDS);
                 return result.arg1();
@@ -376,20 +391,19 @@ public class API {
                 Main.LOGGER.error("[API] Function '{}' timed out", functionName);
                 return LuaValue.NIL;
             }
-
         } catch (Exception e) {
             Main.LOGGER.error("[API] Error calling function '{}': {}", functionName, e.getMessage());
             return LuaValue.NIL;
         }
     }
 
+    // ================= Публичные хелперы =================
+
     public static boolean getStatus() {
         if (!scriptLoaded) return false;
         try {
             LuaValue result = callFunction("getStatus");
-            if (result.isboolean()) {
-                return result.toboolean();
-            }
+            if (result.isboolean()) return result.toboolean();
         } catch (Exception ignored) {}
         return false;
     }
@@ -463,12 +477,10 @@ public class API {
                                              String playerName, String teamName,
                                              String prefix, String suffix, String serverIP) {
         if (message == null) return null;
-
         LuaTable msgTable = new LuaTable();
         msgTable.set("text", LuaValue.valueOf(message.getText()));
         msgTable.set("formatted", LuaValue.valueOf(message.getFormatted()));
         msgTable.set("raw", LuaValue.valueOf(message.getRaw()));
-
         LuaValue result = callFunction("detectAutoNextState",
                 msgTable,
                 source != null ? source : "",
@@ -478,7 +490,6 @@ public class API {
                 suffix != null ? suffix : "",
                 serverIP != null ? serverIP : ""
         );
-
         return result.isnil() ? null : result.tojstring();
     }
 
@@ -516,12 +527,10 @@ public class API {
                                                    String playerName, String teamName,
                                                    String prefix, String suffix, String serverIP) {
         if (message == null) return null;
-
         LuaTable msgTable = new LuaTable();
         msgTable.set("text", LuaValue.valueOf(message.getText()));
         msgTable.set("formatted", LuaValue.valueOf(message.getFormatted()));
         msgTable.set("raw", LuaValue.valueOf(message.getRaw()));
-
         LuaValue result = callFunction("detectAutoNextStateFull",
                 msgTable,
                 source != null ? source : "",
@@ -531,36 +540,24 @@ public class API {
                 suffix != null ? suffix : "",
                 serverIP != null ? serverIP : ""
         );
-
         if (result.isnil()) return null;
 
         String state = null;
         String command = null;
         boolean autoConfirm = true;
-
         if (result.istable()) {
             LuaTable table = (LuaTable) result;
-
             LuaValue stateVal = table.get("state");
-            if (!stateVal.isnil()) {
-                state = stateVal.tojstring();
-            }
-
+            if (!stateVal.isnil()) state = stateVal.tojstring();
             LuaValue cmdVal = table.get("command");
-            if (!cmdVal.isnil()) {
-                command = cmdVal.tojstring();
-            }
-
+            if (!cmdVal.isnil()) command = cmdVal.tojstring();
             LuaValue acVal = table.get("autoConfirm");
-            if (!acVal.isnil()) {
-                autoConfirm = acVal.toboolean();
-            }
+            if (!acVal.isnil()) autoConfirm = acVal.toboolean();
         }
-
         if (state == null) return null;
-
         return new Object[]{state, command, autoConfirm};
     }
+
     // ================= Update-checker script loading =================
 
     public static boolean isUpdateScriptLoaded() {
@@ -571,45 +568,39 @@ public class API {
         return updateCheckSuccess;
     }
 
-    /**
-     * Downloads and loads the update-check Lua script into the shared Lua globals.
-     * Safe to call multiple times; only the first call actually triggers work.
-     */
-    public static void checkUpdate() {
-        if (updateCheckStarted) return;
+    static void checkUpdateInternal(CountDownLatch externalDoneLatch) {
+        if (updateCheckStarted) {
+            if (externalDoneLatch != null) externalDoneLatch.countDown();
+            return;
+        }
         updateCheckStarted = true;
 
         new Thread(() -> {
+            String checkUrl = MirrorManager.resolveUrl(MirrorManager.CHECK_UPDATE_SCRIPT_PATH);
             try {
-                String script = httpGet(CHECK_UPDATE_URL);
+                String script = httpGet(checkUrl);
                 if (script != null && !script.isEmpty()) {
                     loadScript(script);
                     updateScriptLoaded = true;
                     updateCheckSuccess = true;
                 } else {
                     updateCheckSuccess = false;
+                    mirrorLoadFailed = true;
+                    Main.LOGGER.warn("[API] Empty update-check response (mirror: {}, url: {})",
+                            MirrorManager.getCurrent().id, checkUrl);
                 }
             } catch (Exception e) {
                 updateCheckSuccess = false;
+                mirrorLoadFailed = true;
+                Main.LOGGER.warn("[API] Update-check request failed (mirror: {}, url: {}, cause: {}: {})",
+                        MirrorManager.getCurrent().id, checkUrl, e.getClass().getSimpleName(), e.getMessage(), e);
             } finally {
-                updateScriptLoadLatch.countDown();
+                if (externalDoneLatch != null) externalDoneLatch.countDown();
             }
         }, "API-UpdateCheck-Load").start();
     }
 
-    /**
-     * Waits (up to timeoutSeconds) for the update-check script to finish loading.
-     * Returns true if it loaded successfully within that time.
-     */
-    public static boolean awaitUpdateScriptLoaded(long timeoutSeconds) {
-        try {
-            boolean completed = updateScriptLoadLatch.await(timeoutSeconds, TimeUnit.SECONDS);
-            return completed && updateScriptLoaded;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
+    // ================= Сетевые события =================
 
     @SubscribeEvent
     public void onServerConnect(FMLNetworkEvent.ClientConnectedToServerEvent event) {
@@ -617,13 +608,9 @@ public class API {
         if (!ip.equals(currentServerIP)) {
             currentServerIP = ip;
             Main.LOGGER.info("[API] Connected: " + currentServerIP);
-
             if (globals != null) {
                 globals.set("currentServerIP", LuaValue.valueOf(currentServerIP));
             }
-
-            checkUpdate();
-
             long now = System.currentTimeMillis();
             if (now - lastFetchTime > FETCH_INTERVAL_MS) fetch();
         }
@@ -647,13 +634,36 @@ public class API {
         return "";
     }
 
+    // ================= Lifecycle =================
+
+    /**
+     * Запускает обе загрузки параллельно. По завершении обеих вызывает
+     * UpdateChecker.onInitLoadFinished() — тот кладёт нужные уведомления
+     * в Main.pendingMessages, тик доставит их при первом доступном mc.player.
+     */
     public static void init() {
         initLuaEngine();
-        UpdateChecker.register();
-        checkUpdate();
-        fetch();
+
+        CountDownLatch checkDone = new CountDownLatch(1);
+        CountDownLatch fetchDone = new CountDownLatch(1);
+
+        checkUpdateInternal(checkDone);
+        fetchInternal(fetchDone);
+
+        new Thread(() -> {
+            try {
+                checkDone.await(30, TimeUnit.SECONDS);
+                fetchDone.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            Main.LOGGER.info("[API] Init load finished (mirrorFailed={}, updateSuccess={})",
+                    mirrorLoadFailed, updateCheckSuccess);
+            UpdateChecker.onInitLoadFinished();
+        }, "API-InitLoad-Await").start();
+
         MinecraftForge.EVENT_BUS.register(new API());
-        Main.LOGGER.info("[API] Initialized with Lua scripting engine");
+        Main.LOGGER.info("[API] Initialized with Lua scripting engine (mirror: {})", MirrorManager.getCurrent().id);
     }
 
     public static void shutdown() {
@@ -661,7 +671,39 @@ public class API {
         Main.LOGGER.info("[API] Shutdown complete");
     }
 
-    // ================= Update-checker high level helpers (no luaj exposed) =================
+    /**
+     * Перезагружает все скрипты с нового зеркала. После завершения снова
+     * вызывает UpdateChecker.onInitLoadFinished() для повторной постановки
+     * уведомлений в очередь.
+     */
+    public static void reloadFromCurrentMirror() {
+        resetMirrorState();
+        UpdateChecker.resetNotifyFlags();
+
+        scriptLoaded = false;
+        updateScriptLoaded = false;
+        updateCheckSuccess = false;
+        updateCheckStarted = false;
+        cachedScript = null;
+
+        CountDownLatch checkDone = new CountDownLatch(1);
+        CountDownLatch fetchDone = new CountDownLatch(1);
+
+        checkUpdateInternal(checkDone);
+        fetchInternal(fetchDone);
+
+        new Thread(() -> {
+            try {
+                checkDone.await(15, TimeUnit.SECONDS);
+                fetchDone.await(15, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            UpdateChecker.onInitLoadFinished();
+        }, "API-MirrorReload-AwaitState").start();
+    }
+
+    // ================= Update-checker high level helpers =================
 
     public static boolean checkAndKick() {
         if (!updateScriptLoaded) return false;
@@ -688,12 +730,10 @@ public class API {
         try {
             LuaValue result = callFunction("getUpdateInfo");
             if (result.isnil() || !result.istable()) return null;
-
             LuaValue isOutdated = result.get("is_outdated");
             LuaValue current = result.get("current");
             LuaValue latest = result.get("latest");
             LuaValue downloadUrl = result.get("download_url");
-
             boolean outdated = isOutdated.isboolean() && isOutdated.toboolean();
             return new String[]{
                     String.valueOf(outdated),
@@ -724,13 +764,14 @@ public class API {
         }
     }
 
+    // ================= ChatIgnore script =================
+
     public static boolean isChatIgnoreScriptLoaded() {
         return chatIgnoreScriptLoaded;
     }
+
     public static void loadChatIgnoreScript(String script) {
-        if (globals == null) {
-            initLuaEngine();
-        }
+        if (globals == null) initLuaEngine();
         try {
             globals.load(script).call();
             chatIgnoreScriptLoaded = true;
@@ -739,6 +780,22 @@ public class API {
             Main.LOGGER.error("[API] ChatIgnore Lua error: {}", e.getMessage());
             chatIgnoreScriptLoaded = false;
         }
+    }
+
+    public static void fetchChatIgnoreScript() {
+        new Thread(() -> {
+            try {
+                String script = httpGet(MirrorManager.resolveUrl(MirrorManager.CHATIGNORE_SCRIPT_PATH));
+                if (script != null && !script.isEmpty()) {
+                    loadChatIgnoreScript(script);
+                    Main.LOGGER.info("[API] ChatIgnore script loaded from URL");
+                } else {
+                    Main.LOGGER.warn("[API] ChatIgnore script not found at URL");
+                }
+            } catch (Exception e) {
+                Main.LOGGER.error("[API] Error loading ChatIgnore script", e);
+            }
+        }, "API-ChatIgnore-Loader").start();
     }
 
     public static boolean processChatMessage(String json, String serverIP) {

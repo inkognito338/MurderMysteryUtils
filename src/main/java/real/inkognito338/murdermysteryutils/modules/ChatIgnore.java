@@ -31,9 +31,6 @@ public class ChatIgnore extends Module {
     private boolean logInitialized = false;
     private File currentLogFile;
 
-    private static final String CHATIGNORE_SCRIPT_URL = "https://raw.githubusercontent.com/inkognito338/MurderMysteryUtils/main/API/chatignore.lua";
-    private static boolean scriptLoaded = false;
-
     public ChatIgnore() {
         super("ChatIgnore");
         debug = new Setting("Debug", SettingType.BOOLEAN, false);
@@ -48,8 +45,8 @@ public class ChatIgnore extends Module {
             initLogFile();
         }
 
-        if (!scriptLoaded) {
-            loadLuaScript();
+        if (!API.isChatIgnoreScriptLoaded()) {
+            API.fetchChatIgnoreScript();
         }
     }
 
@@ -67,21 +64,6 @@ public class ChatIgnore extends Module {
         } catch (IOException e) {
             // Игнорируем
         }
-    }
-
-    private void loadLuaScript() {
-        new Thread(() -> {
-            try {
-                String script = API.httpGet(CHATIGNORE_SCRIPT_URL);
-                if (script != null && !script.isEmpty()) {
-                    API.loadChatIgnoreScript(script);
-                    scriptLoaded = true;
-                    Main.LOGGER.info("[ChatIgnore] Lua script loaded");
-                }
-            } catch (Exception e) {
-                Main.LOGGER.error("[ChatIgnore] Error loading Lua script", e);
-            }
-        }, "ChatIgnore-LuaLoader").start();
     }
 
     private void initLogFile() {

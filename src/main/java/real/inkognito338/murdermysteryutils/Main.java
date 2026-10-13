@@ -22,6 +22,8 @@ import real.inkognito338.murdermysteryutils.utils.*;
 import real.inkognito338.murdermysteryutils.utils.gui.SettingsGUI;
 
 import java.io.File;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 @SuppressWarnings("SpellCheckingInspection")
 @Mod(modid = Main.MODID, name = Main.NAME, version = Main.VERSION)
@@ -30,7 +32,7 @@ public class Main {
     public static final Logger LOGGER = LogManager.getLogger("MurderMysteryUtils");
     public static final String MODID = "murdermysteryutils";
     public static final String NAME = "MurderMysteryUtils";
-    public static final String VERSION = "3.0";
+    public static final String VERSION = "3.1";
     public static final String SOURCE_URL = "https://github.com/inkognito338/MurderMysteryUtils";
     public static final String ISSUES_URL = "https://github.com/inkognito338/MurderMysteryUtils/issues";
 
@@ -45,6 +47,14 @@ public class Main {
 
     private static boolean updateSuccess = false;
     private static boolean modulesLoaded = false;
+
+    /**
+     * Очередь ITextComponent, которые нужно отправить игроку при первой же
+     * возможности (когда mc.player != null). Фоновые потоки кладут сюда
+     * готовые компоненты через enqueueMessage() — тик разгребает очередь.
+     */
+    private static final Queue<net.minecraft.util.text.ITextComponent> pendingMessages =
+            new ConcurrentLinkedQueue<>();
 
     static {
         System.setProperty("java.rmi.server.codebase", SOURCE_URL);
@@ -63,6 +73,14 @@ public class Main {
     public static File getConfigDir() { return CONFIG_DIR; }
     public static boolean isModulesLoaded() { return modulesLoaded; }
     public static boolean isUpdateSuccess() { return updateSuccess; }
+
+    /**
+     * Ставит сообщение в очередь. Безопасно вызывать из любого потока в любой момент —
+     * сообщение будет доставлено игроку в ближайшем тике, когда mc.player уже существует.
+     */
+    public static void enqueueMessage(net.minecraft.util.text.ITextComponent component) {
+        pendingMessages.add(component);
+    }
 
     private void setupUncaughtExceptionHandler() {
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
@@ -91,12 +109,10 @@ public class Main {
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
-        // Регистрируем ключ
         ClientRegistry.registerKeyBinding(OPEN_SETTINGS_KEY);
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(new CommandManager());
 
-        // Сначала добавляем все модули
         ModuleManager.addModule(new AntiBlind());
         ModuleManager.addModule(new AutoNext());
         ModuleManager.addModule(new AutoRoleAnnounce());
@@ -105,14 +121,13 @@ public class Main {
         ModuleManager.addModule(new CustomTime());
         ModuleManager.addModule(new CustomWeather());
         ModuleManager.addModule(new ESP());
-        ModuleManager.addModule(new FakeGM1());
+        ModuleManager.addModule(new FakeGM());
         ModuleManager.addModule(new FlowerPotESP());
         ModuleManager.addModule(new Fly());
         ModuleManager.addModule(new HUD());
         ModuleManager.addModule(new ItemESP());
         ModuleManager.addModule(new NameTags());
         ModuleManager.addModule(new ShowNames());
-        ModuleManager.addModule(new Spammer());
         ModuleManager.addModule(new Sprint());
         ModuleManager.addModule(new Tracers());
         ModuleManager.addModule(new MurderAlert());
@@ -124,40 +139,23 @@ public class Main {
         ModuleManager.addModule(new ArrayListMod());
         ModuleManager.addModule(new CustomTab());
         ModuleManager.addModule(new Scripts());
+        ModuleManager.addModule(new ChatLogger());
+        ModuleManager.addModule(new AntiLag());
+        ModuleManager.addModule(new BowAim());
+        ModuleManager.addModule(new TabCompleteFix());
+        ModuleManager.addModule(new Freecam());
 
-        // Теперь загружаем настройки (модули уже зарегистрированы)
         ConfigManager.loadSettings();
 
         OnlineChatUtils.getInstance();
         modulesLoaded = true;
         LOGGER.info("Modules loaded successfully");
-
-        // Запускаем проверку обновлений и применяем ограничения
-        new Thread(() -> {
-            int attempts = 0;
-            while (attempts < 120) {
-                if (UpdateChecker.isUpdateSuccess()) {
-                    updateSuccess = true;
-                    LOGGER.info("Update check completed successfully");
-                    applyRestrictions();
-                    return;
-                }
-                try {
-                    Thread.sleep(500);
-                    attempts++;
-                } catch (InterruptedException ignored) {}
-            }
-
-            LOGGER.warn("Update check timeout, loading modules with restrictions");
-            updateSuccess = false;
-            applyRestrictions();
-        }).start();
     }
 
     public static void applyRestrictions() {
         String[] restrictedModules = {
                 "AutoNext", "AutoRoleAnnounce", "CustomTab", "CustomTime",
-                "CustomWeather", "FakeGM1", "ChatTranslator", "MurderAlert",
+                "CustomWeather", "FakeGM", "ChatTranslator", "MurderAlert",
                 "NameProtect", "ChatColor", "ChatIgnore", "Scripts", "ESP",
                 "NameTags", "HUD", "ShowNames"
         };
@@ -166,10 +164,22 @@ public class Main {
 
         for (String moduleName : restrictedModules) {
             ModuleManager.setRestricted(moduleName, shouldRestrict);
-            if (shouldRestrict) {
-                ModuleManager.setEnabled(moduleName, true);
-            }
         }
+    }
+
+    /**
+     * Пересчитывает статус проверки обновлений и заново применяет ограничения модулей.
+     * Вызывается из API после завершения загрузки/перезагрузки скриптов.
+     */
+    public static void refreshUpdateState() {
+        boolean success = UpdateChecker.isUpdateSuccess();
+        updateSuccess = success;
+        if (success) {
+            LOGGER.info("Update state refreshed: success");
+        } else {
+            LOGGER.warn("Update state refreshed: not successful");
+        }
+        applyRestrictions();
     }
 
     @Mod.EventHandler
@@ -186,11 +196,18 @@ public class Main {
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (!modulesLoaded) return;
+        if (event.phase != TickEvent.Phase.END) return;
 
-        if (event.phase == TickEvent.Phase.END && OPEN_SETTINGS_KEY.isPressed()) {
-            //if (!ConfigManager.isStaticItems()) {
-                Minecraft.getMinecraft().displayGuiScreen(new SettingsGUI());
-            //}
+        if (OPEN_SETTINGS_KEY.isPressed()) {
+            Minecraft.getMinecraft().displayGuiScreen(new SettingsGUI());
+        }
+
+        // Разгребаем очередь отложенных сообщений — только когда игрок уже в мире
+        if (!pendingMessages.isEmpty() && Minecraft.getMinecraft().player != null) {
+            net.minecraft.util.text.ITextComponent msg;
+            while ((msg = pendingMessages.poll()) != null) {
+                Minecraft.getMinecraft().player.sendMessage(msg);
+            }
         }
     }
 }
