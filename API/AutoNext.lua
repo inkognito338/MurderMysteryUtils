@@ -2,7 +2,7 @@
 --  AutoNext.lua 3
 -- ============================================================
 
-local DEBUG = false
+local DEBUG = true
 
 local YUKI_SERVERS = {
     "dexland",
