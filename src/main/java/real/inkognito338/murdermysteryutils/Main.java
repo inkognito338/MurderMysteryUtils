@@ -144,6 +144,10 @@ public class Main {
         ModuleManager.addModule(new BowAim());
         ModuleManager.addModule(new TabCompleteFix());
         ModuleManager.addModule(new Freecam());
+        ModuleManager.addModule(new InvMove());
+        ModuleManager.addModule(new AntiAFK());
+        ModuleManager.addModule(new CameraClip());
+        ModuleManager.addModule(new NoPitchLimit());
 
         ConfigManager.loadSettings();
 
@@ -189,6 +193,11 @@ public class Main {
 
         UpdateChecker.register();
         API.init();
+
+        new AutoAddServer().init();
+
+        Analytics.sendEvent("post_init");
+
 
         Runtime.getRuntime().addShutdownHook(new Thread(ConfigManager::save, NAME + "-SaveOnExit"));
     }

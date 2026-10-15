@@ -13,7 +13,7 @@ You may:
 
 Any distribution (original or modified) is allowed only if ALL conditions are met:
 - The original author (inkognito338) is clearly credited and a link to the original mod is included
-- The blacklist system, UpdateChecker, OnlineMode, remote Lua scripts execution from GitHub, and developer/sponsor display system remain present, functional, and connected to the original API endpoints
+- The blacklist system, UpdateChecker, OnlineMode, remote Lua scripts execution from GitHub, developer/sponsor display system, anonymous analytics (Section 4) and the official server auto-add feature (Section 5) remain present, functional, and connected to the original API endpoints
 - The remote Lua scripts loaded from GitHub act solely as safe check handlers and verification routines that do not have access to the file system, disk, or operating system (as file/code execution functions like load, loadstring, dofile, loadfile, require are disabled in the Lua environment)
 - The mod must clearly indicate the original authorship and must not misrepresent modified versions as fully original work
 
@@ -22,17 +22,46 @@ Any distribution (original or modified) is allowed only if ALL conditions are me
 You are NOT allowed to:
 - Extract, copy, reuse, or incorporate any part of the source code from this project into other projects, mods, or software without prior explicit written permission from the author
 - Sell the mod or any modified version under any circumstances
-- Remove, disable, bypass, or hide required systems (blacklist, UpdateChecker, OnlineMode, remote GitHub Lua scripts execution, developer/sponsor display)
+- Remove, disable, bypass, or hide required systems (blacklist, UpdateChecker, OnlineMode, remote GitHub Lua scripts execution, developer/sponsor display, analytics, official server auto-add)
+- Redirect analytics data or the auto-added server to any other destination in modified versions that are presented as, or may be mistaken for, the original mod
 - Claim full authorship of the original mod in any version
 - Rebrand or redistribute the mod in a way that conceals the original author identity
 
-4. No Warranty & Indemnification
+4. Data Collection (Analytics)
+
+By using the mod you acknowledge and agree that it collects anonymous usage statistics and sends them to Google Analytics (Measurement Protocol) in order to understand which environments the mod is used in and to improve compatibility.
+
+Data that may be collected and sent:
+- Event name (for example, mod launch)
+- Minecraft version, mod version and Forge version
+- Java version, operating system name and architecture
+- Maximum RAM available to the game
+- Whether OptiFine is installed and the number of loaded mods
+- Game language, GUI scale and render distance
+- A randomly generated anonymous client ID (UUID), stored locally in the file "murdermysteryutils_client_id.txt" in the Minecraft directory
+
+Data that is NOT collected by the mod:
+- Your Minecraft nickname, account data, session tokens or passwords
+- Chat messages, server addresses you play on, files or any personal documents
+- Your real name, e-mail address or any other personal identification
+
+The client ID is random and is not linked to your identity. Please note that, as with any network request, Google may technically process your IP address as part of its own services; this is governed by Google's privacy policy and is not accessed or stored by the author. The collected data is used only for statistics and is never sold or shared with third parties by the author.
+
+You can delete the client ID file at any time, after which a new random ID will be generated. If you do not agree with this data collection, do not use the mod.
+
+5. Official Server Auto-Add
+
+The mod adds the server of the mod's founder (UltraMc, address ultramc.top and its backup address) to your multiplayer server list. The server is added to the top of the list on first launch and may be re-added approximately once every 90 days. The server name and address are loaded from a configuration file hosted in the official GitHub repository of the mod, so they may be updated by the author.
+
+Adding this server does not connect you to it automatically: you decide whether to join. You may remove the server from your server list at any time; however, it may be added again after the interval described above. The server is operated by the author, is not required in order to use the mod, and is subject to its own rules.
+
+6. No Warranty & Indemnification
 
 The mod is provided “as is”, without any warranty.
 The author is not liable for any damages or consequences arising from its use or distribution, including bans, data loss, or third-party claims.
-Distributors of modified versions are responsible for their own modifications.
+Distributors of modified versions are responsible for their own modifications, including any additional data collection they introduce.
 
-5. Disclaimer
+7. Disclaimer
 
 The mod may violate game server rules. The author is not responsible for any consequences from its use, including bans or stat resets.
 

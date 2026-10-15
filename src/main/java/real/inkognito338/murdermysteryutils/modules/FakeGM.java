@@ -5,11 +5,17 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.client.network.NetworkPlayerInfo;
+import net.minecraft.network.play.client.CPacketPlayerDigging;
 import net.minecraft.network.play.server.SPacketChangeGameState;
 import net.minecraft.network.play.server.SPacketJoinGame;
 import net.minecraft.network.play.server.SPacketPlayerAbilities;
 import net.minecraft.network.play.server.SPacketRespawn;
+import net.minecraft.util.EnumFacing;
+import net.minecraft.util.EnumHand;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.RayTraceResult;
 import net.minecraft.world.GameType;
+import net.minecraftforge.common.ForgeHooks;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -29,18 +35,33 @@ public class FakeGM extends Module {
     // GameState id для CHANGE_GAME_MODE (см. SPacketChangeGameState)
     private static final int CHANGE_GAME_MODE = 3;
 
+    // Минимальный интервал между ломаниями одного и того же блока при удержании
+    private static final int SAME_BLOCK_COOLDOWN_TICKS = 4;
+
     private final Minecraft mc = Minecraft.getMinecraft();
     private final Setting mode;
+    private final Setting instantBreak;
 
     // Серверное состояние полёта — обновляется из SPacketPlayerAbilities.
     private volatile boolean serverAllowFlying = false;
     private volatile boolean serverPacketReceived = false;
+
+    // Своё состояние ЛКМ — чтобы ловить момент нажатия (фронт) и удержание.
+    private boolean prevAttackDown = false;
+
+    // Последний сломанный блок и тик, когда это было — для кулдауна
+    // при удержании ЛКМ по одному и тому же месту.
+    private BlockPos lastBrokenPos = null;
+    private int lastBreakTick = -1000;
 
     public FakeGM() {
         super("FakeGM");
         mode = new Setting("Mode", SettingType.MODE, "Creative",
                 "Survival", "Creative", "Adventure", "Spectator");
         addSetting(mode);
+
+        instantBreak = new Setting("InstantBreak", SettingType.BOOLEAN, false);
+        addSetting(instantBreak);
     }
 
     private GameType getSelectedGameType() {
@@ -52,6 +73,11 @@ public class FakeGM extends Module {
             case "Spectator": return GameType.SPECTATOR;
             default:          return GameType.CREATIVE;
         }
+    }
+
+    private boolean isInstantBreakEnabled() {
+        Setting s = getSettingByName("InstantBreak");
+        return s != null && Boolean.TRUE.equals(s.getValue());
     }
 
     @Override
@@ -66,6 +92,13 @@ public class FakeGM extends Module {
         restoreRealGameType();
         restoreFlight();
         removeHandler();
+
+        prevAttackDown = false;
+        lastBrokenPos = null;
+        lastBreakTick = -1000;
+        if (mc.playerController != null) {
+            mc.playerController.resetBlockRemoving();
+        }
     }
 
     @SubscribeEvent
@@ -85,10 +118,10 @@ public class FakeGM extends Module {
             mc.playerController.setGameType(selected);
         }
 
+        // --- 1.5. Instant break ---
+        handleInstantBreak();
+
         // --- 2. Flight отражает серверное состояние ---
-        // Пока свежий пакет SPacketPlayerAbilities не пришёл (например
-        // после смены мира) — не трогаем allowFlying вообще. Ваниль
-        // сама выставит его по геймтайпу из SPacketRespawn.
         if (!serverPacketReceived) return;
 
         boolean allowed = serverAllowFlying;
@@ -105,6 +138,80 @@ public class FakeGM extends Module {
         if (changed) {
             mc.player.sendPlayerAbilities();
         }
+    }
+
+    // ====== INSTANT BREAK ======
+
+    private int blockHitDelay = 0;
+
+    private void handleInstantBreak() {
+        if (!isInstantBreakEnabled()) {
+            prevAttackDown = mc.gameSettings.keyBindAttack.isKeyDown();
+            return;
+        }
+
+        GameType current = mc.playerController.getCurrentGameType();
+        if (current != GameType.SURVIVAL && current != GameType.ADVENTURE) {
+            prevAttackDown = mc.gameSettings.keyBindAttack.isKeyDown();
+            return;
+        }
+
+        if (mc.currentScreen != null || !mc.inGameHasFocus) {
+            prevAttackDown = mc.gameSettings.keyBindAttack.isKeyDown();
+            return;
+        }
+
+        // ваниль декрементит blockHitDelay каждый тик
+        if (blockHitDelay > 0) {
+            --blockHitDelay;
+        }
+
+        boolean attackDown = mc.gameSettings.keyBindAttack.isKeyDown();
+        boolean justPressed = attackDown && !prevAttackDown;
+        prevAttackDown = attackDown;
+
+        if (!attackDown) {
+            lastBrokenPos = null;
+            return;
+        }
+
+        RayTraceResult mop = mc.objectMouseOver;
+        if (mop == null || mop.typeOfHit != RayTraceResult.Type.BLOCK) return;
+
+        BlockPos pos = mop.getBlockPos();
+        EnumFacing side = mop.sideHit;
+
+        if (mc.world.isAirBlock(pos)) return;
+        if (!mc.world.getWorldBorder().contains(pos)) return;
+
+        // === ВАНИЛЬ: onPlayerDamageBlock ===
+        // при удержании — сначала blockHitDelay
+        if (!justPressed && blockHitDelay > 0) {
+            return;   // ← это и есть "задержка как в гм1" при удержании
+        }
+
+        // === clickBlockCreative 1:1 ===
+        mc.getTutorial().onHitBlock(mc.world, pos, mc.world.getBlockState(pos), 1.0F);
+        mc.player.connection.sendPacket(new CPacketPlayerDigging(
+                CPacketPlayerDigging.Action.START_DESTROY_BLOCK, pos, side));
+
+        if (!ForgeHooks.onLeftClickBlock(
+                mc.player, pos, side,
+                ForgeHooks.rayTraceEyeHitVec(mc.player, mc.playerController.getBlockReachDistance() + 1.0F)
+        ).isCanceled()) {
+            if (!mc.world.extinguishFire(mc.player, pos, side)) {
+                mc.playerController.onPlayerDestroyBlock(pos);
+            }
+        }
+
+        // ваниль ставит blockHitDelay = 5 после каждого слома
+        blockHitDelay = 5;
+
+        lastBrokenPos = pos.toImmutable();
+        lastBreakTick = mc.player.ticksExisted;
+
+        mc.effectRenderer.addBlockHitEffects(pos, mop);
+        mc.player.swingArm(EnumHand.MAIN_HAND);
     }
 
     // ====== NETTY HANDLER ======
@@ -140,7 +247,6 @@ public class FakeGM extends Module {
     }
 
     private Object handlePacket(Object msg) {
-        // --- SPacketPlayerAbilities: запоминаем серверное состояние ---
         if (msg instanceof SPacketPlayerAbilities) {
             SPacketPlayerAbilities abilities = (SPacketPlayerAbilities) msg;
             serverAllowFlying = abilities.isAllowFlying();
@@ -148,24 +254,16 @@ public class FakeGM extends Module {
             return msg;
         }
 
-        // --- Смена мира: сбрасываем состояние флая ---
-        // SPacketRespawn приходит при смене измерения/респавне.
-        // SPacketJoinGame приходит при первом входе в мир.
-        // В обоих случаях старый serverAllowFlying уже неактуален —
-        // ваниль выставит allowFlying по геймтайпу из этого пакета,
-        // а мы не должны ему мешать до следующего SPacketPlayerAbilities.
         if (msg instanceof SPacketRespawn || msg instanceof SPacketJoinGame) {
             serverPacketReceived = false;
             serverAllowFlying = false;
-            // Хендлер мог быть потерян при пересоздании pipeline —
-            // попробуем переинжектить (на случай, если pipeline уже новый).
-            // Делать это прямо тут нельзя (мы в Netty-потоке), поэтому
-            // отложим через Minecraft.addScheduledTask.
+            prevAttackDown = false;
+            lastBrokenPos = null;
+            lastBreakTick = -1000;
             Minecraft.getMinecraft().addScheduledTask(this::injectHandler);
             return msg;
         }
 
-        // --- SPacketChangeGameState: смена геймтайпа ---
         if (msg instanceof SPacketChangeGameState) {
             SPacketChangeGameState state = (SPacketChangeGameState) msg;
             if (state.getGameState() == CHANGE_GAME_MODE) {
@@ -189,6 +287,9 @@ public class FakeGM extends Module {
         removeHandler();
         serverPacketReceived = false;
         serverAllowFlying = false;
+        prevAttackDown = false;
+        lastBrokenPos = null;
+        lastBreakTick = -1000;
     }
 
     private GameType getRealGameType() {

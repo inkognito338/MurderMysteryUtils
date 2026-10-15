@@ -11,6 +11,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -32,10 +33,11 @@ public class ConfigManager {
 
     private static boolean initialized = false;
 
-    private static final Map<String, Boolean> booleanSettings = new HashMap<>();
-    private static final Map<String, String> stringSettings = new HashMap<>();
-    private static final Map<String, Integer> intSettings = new HashMap<>();
-    private static final Map<String, Long> longSettings = new HashMap<>();
+    // Произвольные настройки (используются, например, AutoAddServer) - сохраняются в конфиг
+    private static final Map<String, Boolean> booleanSettings = new ConcurrentHashMap<>();
+    private static final Map<String, String> stringSettings = new ConcurrentHashMap<>();
+    private static final Map<String, Integer> intSettings = new ConcurrentHashMap<>();
+    private static final Map<String, Long> longSettings = new ConcurrentHashMap<>();
     private static final File TIMEZONE_CONFIG_FILE = new File(Minecraft.getMinecraft().mcDataDir, "timezoneconfig.cfg");
 
     /**
@@ -79,12 +81,41 @@ public class ConfigManager {
         save();
     }
 
-    public static void save() {
+    public static synchronized void save() {
         JsonObject json = new JsonObject();
 
         json.addProperty("staticItems", staticItems);
         json.addProperty("theme", currentThemeName); // Изменено с theme.name() на строку
         json.addProperty("mirror", MirrorManager.getCurrent().id);
+
+        // Произвольные настройки (boolean/string/int/long)
+        JsonObject customObj = new JsonObject();
+
+        JsonObject boolObj = new JsonObject();
+        for (Map.Entry<String, Boolean> e : booleanSettings.entrySet()) {
+            boolObj.addProperty(e.getKey(), e.getValue());
+        }
+        customObj.add("boolean", boolObj);
+
+        JsonObject strObj = new JsonObject();
+        for (Map.Entry<String, String> e : stringSettings.entrySet()) {
+            strObj.addProperty(e.getKey(), e.getValue());
+        }
+        customObj.add("string", strObj);
+
+        JsonObject intObj = new JsonObject();
+        for (Map.Entry<String, Integer> e : intSettings.entrySet()) {
+            intObj.addProperty(e.getKey(), e.getValue());
+        }
+        customObj.add("int", intObj);
+
+        JsonObject longObj = new JsonObject();
+        for (Map.Entry<String, Long> e : longSettings.entrySet()) {
+            longObj.addProperty(e.getKey(), e.getValue());
+        }
+        customObj.add("long", longObj);
+
+        json.add("custom", customObj);
 
         JsonObject modulesObj = new JsonObject();
         for (Module module : ModuleManager.getModules()) {
@@ -196,11 +227,62 @@ public class ConfigManager {
                 // на случай старого конфига без поля mirror
             }
 
+            // Загружаем произвольные настройки (boolean/string/int/long)
+            if (json.has("custom") && json.get("custom").isJsonObject()) {
+                JsonObject customObj = json.getAsJsonObject("custom");
+
+                if (customObj.has("boolean") && customObj.get("boolean").isJsonObject()) {
+                    booleanSettings.clear();
+                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("boolean").entrySet()) {
+                        try {
+                            booleanSettings.put(e.getKey(), e.getValue().getAsBoolean());
+                        } catch (Exception ex) {
+                            LOGGER.log(Level.WARNING, "Bad boolean setting: " + e.getKey(), ex);
+                        }
+                    }
+                }
+
+                if (customObj.has("string") && customObj.get("string").isJsonObject()) {
+                    stringSettings.clear();
+                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("string").entrySet()) {
+                        try {
+                            stringSettings.put(e.getKey(), e.getValue().getAsString());
+                        } catch (Exception ex) {
+                            LOGGER.log(Level.WARNING, "Bad string setting: " + e.getKey(), ex);
+                        }
+                    }
+                }
+
+                if (customObj.has("int") && customObj.get("int").isJsonObject()) {
+                    intSettings.clear();
+                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("int").entrySet()) {
+                        try {
+                            intSettings.put(e.getKey(), e.getValue().getAsInt());
+                        } catch (Exception ex) {
+                            LOGGER.log(Level.WARNING, "Bad int setting: " + e.getKey(), ex);
+                        }
+                    }
+                }
+
+                if (customObj.has("long") && customObj.get("long").isJsonObject()) {
+                    longSettings.clear();
+                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("long").entrySet()) {
+                        try {
+                            longSettings.put(e.getKey(), e.getValue().getAsLong());
+                        } catch (Exception ex) {
+                            LOGGER.log(Level.WARNING, "Bad long setting: " + e.getKey(), ex);
+                        }
+                    }
+                }
+            }
+
             if (json.has("modules")) {
                 JsonObject modulesObj = json.getAsJsonObject("modules");
                 for (Module module : ModuleManager.getModules()) {
                     LOGGER.info("Module='" + module.getName() + "' inConfig=" + modulesObj.has(module.getName())
-                            + " settingsCount=" + module.getSettings().size());                   if (modulesObj.has(module.getName())) {
+                            + " settingsCount=" + module.getSettings().size());
+
+                    if (modulesObj.has(module.getName())) {
                         JsonObject moduleObj = modulesObj.getAsJsonObject(module.getName());
 
                         if (moduleObj.has("enabled")) {

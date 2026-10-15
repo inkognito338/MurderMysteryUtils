@@ -122,6 +122,8 @@ dependencies {
 
     // Source: https://mvnrepository.com/artifact/org.java-websocket/Java-WebSocket
     embed("org.java-websocket:Java-WebSocket:1.6.0")
+//    embed('com.github.pemistahl:lingua:1.2.2')
+
 
 }
 
