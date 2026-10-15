@@ -2,7 +2,7 @@
 --  AutoNext.lua 3
 -- ============================================================
 
-local DEBUG = true
+local DEBUG = false
 
 local YUKI_SERVERS = {
     "dexland",
@@ -68,7 +68,7 @@ function detectAutoNextStateFull(message, source, playerName, teamName, prefix, 
     debugLog("defaultCommand: " .. defaultCommand)
     
     if source == "chat" and isYukiServer(serverIP) then
-        if formatted:find("MurderMystery ▸ Перезагрузка сервера через 10 секунд!") then
+        if text:find("MurderMystery ▸ Перезагрузка сервера через 10 секунд!", 1, true) then
             debugLog("GAME_END detected in CHAT!")
             return { state = "GAME_END", command = defaultCommand, autoConfirm = false }
         end
