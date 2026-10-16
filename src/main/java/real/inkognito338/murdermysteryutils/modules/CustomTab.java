@@ -30,6 +30,7 @@ import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.GL11;
+import real.inkognito338.murdermysteryutils.Main;
 import real.inkognito338.murdermysteryutils.online.OnlineMode;
 import real.inkognito338.murdermysteryutils.online.TabAnimationData;
 import real.inkognito338.murdermysteryutils.utils.API;
@@ -66,6 +67,11 @@ public class CustomTab extends Module {
     private static final int TEAM_ID_LENGTH = 10; // длина ID команды перед символом 'Q' (CMTabList)
 
     private static final int LEFT_PAD = 4; // отступ слева в строке (место под акцентную полоску)
+
+    private final Map<String, String> nickTags = new ConcurrentHashMap<>();
+    private volatile String nickTagsServer = "";
+    private volatile long nickTagsFetchedAt = 0L;
+    private static final long NICK_TAGS_TTL_MS = 5 * 60 * 1000L; // 5 минут
 
     private final Setting playersPerColumn = new Setting("Players Per Column", SettingType.NUMBER, 20.0, 1, 100);
     private final Setting sortMode = new Setting("Sort Mode", SettingType.MODE, "Server",
@@ -105,6 +111,22 @@ public class CustomTab extends Module {
         addSetting(tabAnimation);
     }
 
+    private void refreshNickTags() {
+        if (!API.isLoaded()) return;
+        if (!API.isTagsScriptLoaded()) return;
+
+        String server = API.getServerIP();
+        long now = System.currentTimeMillis();
+        if (server.equals(nickTagsServer) && now - nickTagsFetchedAt < NICK_TAGS_TTL_MS) return;
+
+        Map<String, String> fetched = API.getNickTagsForServer(server);
+        nickTags.clear();
+        nickTags.putAll(fetched);
+        nickTagsServer = server;
+        nickTagsFetchedAt = now;
+
+    }
+
     @Override
     public void onEnable() {
         MinecraftForge.EVENT_BUS.register(this);
@@ -112,6 +134,7 @@ public class CustomTab extends Module {
 
         bootstrapEntries();
         injectHandler();
+        refreshNickTags();
 
         if (OnlineMode.getInstance().isConnected() && !OnlineMode.getInstance().isGuest()) {
             String anim = (String) tabAnimation.getValue();
@@ -259,6 +282,7 @@ public class CustomTab extends Module {
         entries.clear();
         injectHandler();
         bootstrapEntries();
+        refreshNickTags();
     }
 
     @SubscribeEvent
@@ -279,6 +303,7 @@ public class CustomTab extends Module {
             if (entries.isEmpty() && mc.getConnection() != null) {
                 bootstrapEntries();
             }
+            refreshNickTags();
         }
     }
 
@@ -348,6 +373,7 @@ public class CustomTab extends Module {
             data.hasForge = checkForge(profile);
             data.lang = getLanguage(profile);
             data.isFriend = PlayerListManager.isFriend(rawName);
+            data.nickTag = nickTags.get(rawName.toLowerCase());
 
             NetworkPlayerInfo vanillaInfo = mc.player.connection.getPlayerInfo(profile.getId());
             if (vanillaInfo != null) {
@@ -730,7 +756,12 @@ public class CustomTab extends Module {
     /** Теги разделяются ровно одним пробелом. */
     private String buildInfoTags(PlayerData data) {
         StringBuilder sb = new StringBuilder();
+
+        if (data.nickTag != null && !data.nickTag.isEmpty()) {
+            sb.append(data.nickTag);
+        }
         if (data.isFriend && (boolean) highlightFriends.getValue() && (boolean) friendTag.getValue()) {
+            if (sb.length() > 0) sb.append(' ');
             sb.append("§2[Friend]");
         }
         if (data.hasForge) {
@@ -820,6 +851,7 @@ public class CustomTab extends Module {
     private static class PlayerData {
         UUID uuid;
         String name, realNetworkName, prefix, suffix, lang, teamName, teamId, animStyle;
+        String nickTag;
         boolean hasForge, isFriend, defaultSteve, defaultAlex;
         MurderAPI.Role role = MurderAPI.Role.INNOCENT;
         long crc32;

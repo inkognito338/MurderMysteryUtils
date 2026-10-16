@@ -107,6 +107,7 @@ public class MirrorManager {
     public static final String AUTONEXT_SCRIPT_PATH = "API/AutoNext.lua";
     public static final String CHECK_UPDATE_SCRIPT_PATH = "API/check_update.lua";
     public static final String CHATIGNORE_SCRIPT_PATH = "API/chatignore.lua";
+    public static final String TAGS_SCRIPT_PATH = "API/tags.lua";   // <-- добавить
 
     private MirrorManager() {}
 

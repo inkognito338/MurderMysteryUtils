@@ -649,6 +649,7 @@ public class API {
 
         checkUpdateInternal(checkDone);
         fetchInternal(fetchDone);
+        fetchTagsScript();
 
         new Thread(() -> {
             try {
@@ -798,6 +799,33 @@ public class API {
         }, "API-ChatIgnore-Loader").start();
     }
 
+    // ================= Tags script =================
+
+    private static volatile boolean tagsScriptLoaded = false;
+
+    public static boolean isTagsScriptLoaded() {
+        return tagsScriptLoaded;
+    }
+
+    public static void fetchTagsScript() {
+        new Thread(() -> {
+            try {
+                String url = MirrorManager.resolveUrl(MirrorManager.TAGS_SCRIPT_PATH);
+                String script = httpGet(url);
+                if (script == null || script.isEmpty()) {
+                    Main.LOGGER.warn("[API] tags.lua not found at {}", url);
+                    return;
+                }
+                if (globals == null) initLuaEngine();
+                globals.load(script).call();
+                tagsScriptLoaded = true;
+                Main.LOGGER.info("[API] tags.lua loaded from {}", url);
+            } catch (Exception e) {
+                Main.LOGGER.error("[API] Error loading tags.lua", e);
+            }
+        }, "API-Tags-Loader").start();
+    }
+
     public static boolean processChatMessage(String json, String serverIP) {
         if (!chatIgnoreScriptLoaded) return false;
         try {
@@ -807,5 +835,53 @@ public class API {
             Main.LOGGER.error("[API] processChatMessage error: {}", e.getMessage());
             return false;
         }
+    }
+    // ================= Nick tags =================
+
+    /**
+     * Массовый запрос: server -> Map<nickLower, tag>.
+     * Значения приходят из Lua-функции getNickTagsForServer(server).
+     * Если скрипт не загружен или функции нет — вернёт пустую карту.
+     */
+    public static java.util.Map<String, String> getNickTagsForServer(String server) {
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        if (!scriptLoaded || globals == null) return out;
+
+        try {
+            LuaValue func = globals.get("getNickTagsForServer");
+            if (func.isnil()) return out;
+
+            Future<Varargs> future = executor.submit(() ->
+                    func.invoke(LuaValue.varargsOf(new LuaValue[]{
+                            LuaValue.valueOf(server != null ? server : "")
+                    }))
+            );
+
+            Varargs result;
+            try {
+                result = future.get(5000, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                Main.LOGGER.error("[API] getNickTagsForServer timed out");
+                return out;
+            }
+
+            LuaValue value = result.arg1();
+            if (value.isnil() || !value.istable()) return out;
+
+            LuaTable table = (LuaTable) value;
+            for (LuaValue key : table.keys()) {
+                LuaValue v = table.get(key);
+                if (key.isstring() && v.isstring()) {
+                    String tag = v.tojstring();
+                    if (tag != null && !tag.isEmpty() && !"null".equals(tag)) {
+                        out.put(key.tojstring().toLowerCase(), tag.replace("&", "§"));
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Main.LOGGER.error("[API] getNickTagsForServer error: {}", t.getMessage());
+        }
+        return out;
     }
 }

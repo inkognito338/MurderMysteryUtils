@@ -63,11 +63,7 @@ public class ChatColor extends Module {
     private volatile boolean active = false;
 
     static {
-        // Огонь: красный → золото → жёлтый → тёмно-красный
-        PRESETS.put("Fire", new char[]{'c', '6', 'e', '4'});
         // Лёд: синий → аква → тёмно-синий → белый
-        PRESETS.put("Ice", new char[]{'9', 'b', '1', 'f'});
-        // Галактика: тёмно-фиолетовый → фиолетовый → тёмно-синий → аква
         PRESETS.put("Galaxy", new char[]{'5', 'd', '1', 'b'});
         // Закат: тёмно-красный → красный → золото → жёлтый
         PRESETS.put("Sunset", new char[]{'4', 'c', '6', 'e'});
@@ -76,8 +72,6 @@ public class ChatColor extends Module {
         // Гроза: жёлтый → белый → аква → тёмно-аква
         PRESETS.put("Thunder", new char[]{'e', 'f', 'b', '3'});
         // Кровь: красный → тёмно-красный → тёмно-серый
-        PRESETS.put("Blood", new char[]{'c', '4', '8'});
-        // Киберпанк: зелёный → аква → тёмно-аква → розовый → жёлтый → золото
         PRESETS.put("Cyberpunk", new char[]{'a', 'b', '3', 'd', 'e', '6'});
 
         // ─── Новые ───
@@ -89,10 +83,8 @@ public class ChatColor extends Module {
         PRESETS.put("Toxic", new char[]{'2', 'a', 'e', '8'});
         // Мята: тёмно-зелёный → зелёный → белый → аква (свежий, холодный)
         PRESETS.put("Mint", new char[]{'2', 'a', 'f', 'b'});
-        // Корона: тёмно-синий → фиолетовый → розовый → золото → жёлтый
-        PRESETS.put("Royal", new char[]{'1', '5', 'd', '6', 'e'});
-        // Радуга: красный → золото → жёлтый → зелёный → аква → синий → розовый
-        PRESETS.put("Rainbow", new char[]{'c', '6', 'e', 'a', 'b', '9', 'd'});
+
+        PRESETS.put("Rainbow", new char[]{'c', 'b', 'd', 'e', 'a', '3', '6'});
         // Конфетка: розовый → белый → аква → жёлтый
         PRESETS.put("Candy", new char[]{'d', 'f', 'b', 'e'});
     }
@@ -120,8 +112,8 @@ public class ChatColor extends Module {
                 new String[]{"Random", "Static"}
         ));
         addSetting(new Setting("Preset", SettingType.MODE, "None",
-                new String[]{"None", "Cyberpunk", "Thunder", "Blood", "Fire", "Ice", "Galaxy",
-                        "Sunset", "Ghost", "Neon", "Ocean", "Toxic", "Mint", "Royal", "Rainbow", "Candy"}
+                new String[]{"None", "Cyberpunk", "Thunder", "Galaxy",
+                        "Sunset", "Ghost", "Neon", "Ocean", "Toxic", "Mint", "Rainbow", "Candy"}
         ));
         for (int i = 0; i < COLOR_CODES.length; i++) {
             addSetting(new Setting(COLOR_NAMES[i], SettingType.BOOLEAN, true));
@@ -130,6 +122,43 @@ public class ChatColor extends Module {
 
     public static ChatColor getInstance() {
         return INSTANCE;
+    }
+
+    /** Красит текст §-кодами (как в чате): по буквам или по словам. */
+    private static String paint(String text, ColorRotator rotator, boolean perWord) {
+        StringBuilder sb = new StringBuilder();
+        boolean inWord = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == ' ') {
+                sb.append(c);
+                inWord = false;
+                continue;
+            }
+            if (!perWord || !inWord) {
+                sb.append('§').append(rotator.next());
+            }
+            inWord = true;
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    /** Пример текста с текущими настройками (Static-порядок, чтобы превью не мигало). */
+    public String buildPreview(String text) {
+        List<Character> colors = getActiveColors();
+        if (colors.isEmpty()) return text;
+        ColorRotator r = new ColorRotator(colors, new Random(), false);
+        return paint(text, r, "PerWord".equals(getColorStyle()));
+    }
+
+    /** Название пресета, покрашенное его собственными цветами. "None" остаётся как есть. */
+    public static String presetNameColored(String preset) {
+        char[] p = PRESETS.get(preset);
+        if (p == null) return preset;
+        List<Character> list = new ArrayList<>();
+        for (char c : p) list.add(c);
+        return paint(preset, new ColorRotator(list, new Random(), false), false);
     }
 
     public String getCurrentMode() {

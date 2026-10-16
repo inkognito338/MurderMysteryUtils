@@ -26,8 +26,8 @@ public class BindManager {
     // ── Поля ──────────────────────────────────────────────────────
     private final Minecraft mc = Minecraft.getMinecraft();
 
-    /** keyCode → строка-действие (.t fly -s  или  обычное сообщение) */
-    private final Map<Integer, String> binds = new LinkedHashMap<>();
+    /** keyCode → список действий (.t fly -s  или  обычное сообщение) */
+    private final Map<Integer, List<String>> binds = new LinkedHashMap<>();
 
     private File bindsFile;
     private boolean initialized = false;
@@ -60,10 +60,13 @@ public class BindManager {
         int key = Keyboard.getEventKey();
         if (key == Keyboard.KEY_NONE) return;
 
-        String action = binds.get(key);
-        if (action == null) return;
+        List<String> actions = binds.get(key);
+        if (actions == null || actions.isEmpty()) return;
 
-        execute(action);
+        // Выполняем все действия, привязанные к клавише
+        for (String action : actions) {
+            execute(action);
+        }
     }
 
     /**
@@ -85,19 +88,44 @@ public class BindManager {
 
     // ── CRUD ──────────────────────────────────────────────────────
 
+    /**
+     * Добавляет бинд. На одну клавишу можно повесить сколько угодно действий.
+     * Если такое же действие уже есть — не дублируем.
+     */
     public void addBind(int keyCode, String action) {
-        binds.put(keyCode, action);
-        save();
+        List<String> list = binds.computeIfAbsent(keyCode, k -> new ArrayList<>());
+        if (!list.contains(action)) {
+            list.add(action);
+            save();
+        }
     }
 
-    /** @return true если бинд был и удалён */
-    public boolean removeBind(int keyCode) {
+    /**
+     * Удаляет конкретное действие с клавиши.
+     * @return true если действие было и удалено
+     */
+    public boolean removeBind(int keyCode, String action) {
+        List<String> list = binds.get(keyCode);
+        if (list == null) return false;
+        boolean removed = list.remove(action);
+        if (removed) {
+            if (list.isEmpty()) binds.remove(keyCode);
+            save();
+        }
+        return removed;
+    }
+
+    /**
+     * Удаляет все бинды с клавиши.
+     * @return true если что-то было удалено
+     */
+    public boolean removeAllBinds(int keyCode) {
         boolean had = binds.remove(keyCode) != null;
         if (had) save();
         return had;
     }
 
-    public Map<Integer, String> getBinds() {
+    public Map<Integer, List<String>> getBinds() {
         return Collections.unmodifiableMap(binds);
     }
 
@@ -111,8 +139,12 @@ public class BindManager {
                 return;
             }
             JsonObject obj = new JsonObject();
-            for (Map.Entry<Integer, String> e : binds.entrySet()) {
-                obj.addProperty(Keyboard.getKeyName(e.getKey()), e.getValue());
+            for (Map.Entry<Integer, List<String>> e : binds.entrySet()) {
+                JsonArray arr = new JsonArray();
+                for (String action : e.getValue()) {
+                    arr.add(action);
+                }
+                obj.add(Keyboard.getKeyName(e.getKey()), arr);
             }
             try (FileWriter fw = new FileWriter(bindsFile)) {
                 new GsonBuilder().setPrettyPrinting().create().toJson(obj, fw);
@@ -131,8 +163,24 @@ public class BindManager {
 
             for (Map.Entry<String, JsonElement> e : obj.entrySet()) {
                 int code = Keyboard.getKeyIndex(e.getKey().toUpperCase());
-                if (code != Keyboard.KEY_NONE) {
-                    binds.put(code, e.getValue().getAsString());
+                if (code == Keyboard.KEY_NONE) continue;
+
+                List<String> list = new ArrayList<>();
+                JsonElement value = e.getValue();
+
+                // Поддержка нового формата (массив)
+                if (value.isJsonArray()) {
+                    for (JsonElement el : value.getAsJsonArray()) {
+                        list.add(el.getAsString());
+                    }
+                }
+                // Поддержка старого формата (одна строка) — для совместимости
+                else if (value.isJsonPrimitive()) {
+                    list.add(value.getAsString());
+                }
+
+                if (!list.isEmpty()) {
+                    binds.put(code, list);
                 }
             }
             System.out.println("[MurderMysteryUtils] Binds loaded: " + binds.size());

@@ -9,6 +9,7 @@ import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 import real.inkognito338.murdermysteryutils.Main;
+import real.inkognito338.murdermysteryutils.modules.ChatColor;
 import real.inkognito338.murdermysteryutils.modules.Scripts;
 import real.inkognito338.murdermysteryutils.online.OnlineMode;
 import real.inkognito338.murdermysteryutils.online.OnlineModeGUI;
@@ -411,14 +412,20 @@ public class SettingsGUI extends GuiScreen {
                     case SCRIPT_BUTTON: rowH = 34; break;
                     default: rowH = 28; break;
                 }
-                boolean elementVisible = cy + rowH > windowY + SETTINGS_CONTENT_TOP && cy < windowY + SETTINGS_CONTENT_BOTTOM;
+                boolean elementVisible = cy + rowH + getExtraRowHeight(s) > windowY + SETTINGS_CONTENT_TOP && cy < windowY + SETTINGS_CONTENT_BOTTOM;
                 if (elementVisible) {
                     switch (s.getType()) {
-                        case BOOLEAN:
+                        case BOOLEAN: {
                             drawSettingBackground(sx, (int) cy, sw, 24, mouseX, mouseY);
-                            mc.fontRenderer.drawString(s.getName(), sx + 8, (int) cy + 8, ThemeManager.getTextSecondary());
+                            char code = colorCodeOf(s);
+                            if (code != 0) {
+                                mc.fontRenderer.drawStringWithShadow("§" + code + s.getName(), sx + 8, (int) cy + 8, 0xFFFFFFFF);
+                            } else {
+                                mc.fontRenderer.drawString(s.getName(), sx + 8, (int) cy + 8, ThemeManager.getTextSecondary());
+                            }
                             drawSwitch(sx + sw - 34, (int) cy + 4, (boolean) s.getValue());
                             break;
+                        }
                         case SCRIPT_BUTTON:
                             drawScriptButton(s, sx, (int) cy, sw, mouseX, mouseY);
                             break;
@@ -441,8 +448,10 @@ public class SettingsGUI extends GuiScreen {
                             RenderUtils.drawRoundedRect(dX, dY, dX + dW, dY + dH, 4, ThemeManager.getDropdownBg());
                             RenderUtils.drawRoundedRectOutline(dX, dY, dX + dW, dY + dH, 4, openDropdownSetting == s ? ThemeManager.getAccent() : ThemeManager.getBorder(), 1f);
                             String modeStr = s.getMode();
+                            boolean presetRow = isPresetSetting(s);
                             RenderUtils.startScissor(dX, dY, dW - 12, dH);
-                            mc.fontRenderer.drawString(modeStr, dX + 5, dY + 4, ThemeManager.getAccent());
+                            mc.fontRenderer.drawString(presetRow ? ChatColor.presetNameColored(modeStr) : modeStr,
+                                    dX + 5, dY + 4, presetRow ? 0xFFFFFFFF : ThemeManager.getAccent());
                             RenderUtils.stopScissor();
                             mc.fontRenderer.drawString(openDropdownSetting == s ? "▲" : "▼", dX + dW - 10, dY + 4, ThemeManager.getTextDim());
 
@@ -478,7 +487,10 @@ public class SettingsGUI extends GuiScreen {
                             break;
                     }
                 }
-                cy += rowH;
+                if (getExtraRowHeight(s) > 0) {
+                    drawPresetPreview(sx, (int) cy + rowH, sw, mouseX, mouseY);
+                }
+                cy += rowH + getExtraRowHeight(s);
             }
 
             maxSettingsScrollY = Math.min(0, SETTINGS_CONTENT_HEIGHT - (cy - cyStart));
@@ -911,8 +923,16 @@ public class SettingsGUI extends GuiScreen {
                         dropdownDrawX + dropdownDrawW - 2, curY + itemH, 3, ThemeManager.getDropdownHover());
             }
 
-            int color = mode.equals(s.getMode()) ? ThemeManager.getAccent() : ThemeManager.getTextSecondary();
-            mc.fontRenderer.drawString(mode, dropdownDrawX + 6, (int)curY + 3, color);
+            boolean selected = mode.equals(s.getMode());
+            if (isPresetSetting(s)) {
+                if (selected) {
+                    RenderUtils.drawRoundedRect(dropdownDrawX + 2, curY + 2, dropdownDrawX + 4, curY + itemH - 2, 1, ThemeManager.getAccent());
+                }
+                mc.fontRenderer.drawString(ChatColor.presetNameColored(mode), dropdownDrawX + 8, (int) curY + 3, 0xFFFFFFFF);
+            } else {
+                int color = selected ? ThemeManager.getAccent() : ThemeManager.getTextSecondary();
+                mc.fontRenderer.drawString(mode, dropdownDrawX + 6, (int) curY + 3, color);
+            }
             curY += itemH;
         }
 
@@ -1517,9 +1537,10 @@ public class SettingsGUI extends GuiScreen {
                             break;
                     }
                 }
-                cy += rowH;
+                cy += rowH + getExtraRowHeight(s);
             }
         }
+
         blurAllFields();
     }
 
@@ -1594,6 +1615,31 @@ public class SettingsGUI extends GuiScreen {
         }
 
         colorPicker.mouseClickMove(mouseX, mouseY);
+    }
+
+    private boolean isPresetSetting(Setting s) {
+        return selectedModule instanceof ChatColor && "Preset".equals(s.getName());
+    }
+
+    /** Код цвета из названия вида "Gold (&6)", иначе 0. Только для ChatColor. */
+    private char colorCodeOf(Setting s) {
+        if (!(selectedModule instanceof ChatColor)) return 0;
+        String n = s.getName();
+        int i = n.lastIndexOf("(&");
+        return (i >= 0 && n.length() == i + 4 && n.endsWith(")")) ? n.charAt(i + 2) : 0;
+    }
+
+    /** Высота доп. строки с примерами под Preset (у остальных настроек 0). */
+    private int getExtraRowHeight(Setting s) {
+        return isPresetSetting(s) ? 40 : 0;
+    }
+
+    private void drawPresetPreview(int sx, int y, int sw, int mouseX, int mouseY) {
+        ChatColor cc = (ChatColor) selectedModule;
+        drawSettingBackground(sx, y, sw, 36, mouseX, mouseY);
+        mc.fontRenderer.drawString("Preview", sx + 8, y + 14, ThemeManager.getTextSecondary());
+        mc.fontRenderer.drawStringWithShadow(cc.buildPreview("MurderMysteryUtils by inkognito338"), sx + 58, y + 7, 0xFFFFFFFF);
+        mc.fontRenderer.drawStringWithShadow(cc.buildPreview("давайте короче выпьем чайку заварим чайку"), sx + 58, y + 21, 0xFFFFFFFF);
     }
 
     private void drawSettingBackground(int sx, int cy, int sw, int sh, int mouseX, int mouseY) {

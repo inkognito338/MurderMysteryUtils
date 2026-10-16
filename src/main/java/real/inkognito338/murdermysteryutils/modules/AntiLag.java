@@ -48,11 +48,14 @@ public class AntiLag extends Module {
     private static final String LOG_FILE_NAME = "subway_antilag.log";
     private static final String HANDLER_NAME = "subway_antilag_handler";
 
-    private static final String TRIGGER_MESSAGE =
-            "MurderMystery ▸ Остерегайтесь рельсов, скоро поедет поезд, он может вас убить!";
-    private static final String END_TRIGGER_MESSAGE =
-            "MurderMystery ▸ Поезд проехал, следующий будет через 30 секунд";
-
+    private static final String[] TRIGGER_MESSAGES = {
+            "MurderMystery ▸ Остерегайтесь рельсов, скоро поедет поезд, он может вас убить!",
+            "MurderMystery ▸ Stay away from the tracks, a train is coming soon, it can kill you!"
+    };
+    private static final String[] END_TRIGGER_MESSAGES = {
+            "MurderMystery ▸ Поезд проехал, следующий будет через 30 секунд",
+            "MurderMystery ▸ The train has passed, the next one will arrive in 30 seconds"
+    };
     // Subway AABB
     private static final int SUB_MIN_X = -70;
     private static final int SUB_MIN_Y = 89;
@@ -93,6 +96,13 @@ public class AntiLag extends Module {
     private static final Object LOG_LOCK = new Object();
     private static final SimpleDateFormat LOG_TS =
             new SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT);
+
+    private static boolean containsAny(String text, String[] patterns) {
+        for (String p : patterns) {
+            if (text.contains(p)) return true;
+        }
+        return false;
+    }
 
     public AntiLag() {
         super("AntiLag");
@@ -233,15 +243,14 @@ public class AntiLag extends Module {
         if (event.getMessage() == null) return;
         String text = event.getMessage().getUnformattedText();
         log("Chat: \"" + text + "\"");
-        if (text == null) return;
 
-        if (text.contains(TRIGGER_MESSAGE)) {
+        if (containsAny(text, TRIGGER_MESSAGES)) {
             if (!subwayActive) {
                 subwayActive = true;
                 resetStats();
                 log("SUBWAY TRIGGER -> active");
             }
-        } else if (text.contains(END_TRIGGER_MESSAGE)) {
+        } else if (containsAny(text, END_TRIGGER_MESSAGES)) {
             if (subwayActive) {
                 subwayActive = false;
                 log("SUBWAY END -> inactive");
