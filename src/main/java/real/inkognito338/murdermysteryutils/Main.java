@@ -10,6 +10,7 @@ import net.minecraftforge.fml.common.event.FMLPostInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lwjgl.input.Keyboard;
@@ -19,6 +20,8 @@ import real.inkognito338.murdermysteryutils.commands.CommandManager;
 import real.inkognito338.murdermysteryutils.modules.*;
 import real.inkognito338.murdermysteryutils.online.OnlineChatUtils;
 import real.inkognito338.murdermysteryutils.utils.*;
+import real.inkognito338.murdermysteryutils.utils.analytics.GoogleAnalytics;
+import real.inkognito338.murdermysteryutils.utils.analytics.MixpanelAnalytics;
 import real.inkognito338.murdermysteryutils.utils.gui.SettingsGUI;
 
 import java.io.File;
@@ -73,6 +76,8 @@ public class Main {
     public static File getConfigDir() { return CONFIG_DIR; }
     public static boolean isModulesLoaded() { return modulesLoaded; }
     public static boolean isUpdateSuccess() { return updateSuccess; }
+
+    private final Minecraft mc = Minecraft.getMinecraft();
 
     /**
      * Ставит сообщение в очередь. Безопасно вызывать из любого потока в любой момент —
@@ -148,6 +153,7 @@ public class Main {
         ModuleManager.addModule(new AntiAFK());
         ModuleManager.addModule(new CameraClip());
         ModuleManager.addModule(new NoPitchLimit());
+        ModuleManager.addModule(new FakePing());
 
         ConfigManager.loadSettings();
 
@@ -196,22 +202,23 @@ public class Main {
 
         new AutoAddServer().init();
 
-        Analytics.sendEvent("post_init");
+        GoogleAnalytics.sendEvent("post_init");
+        MixpanelAnalytics.sendEvent("post_init");
 
 
         Runtime.getRuntime().addShutdownHook(new Thread(ConfigManager::save, NAME + "-SaveOnExit"));
     }
 
+
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (!modulesLoaded) return;
-        if (event.phase != TickEvent.Phase.END) return;
+        if (event.phase != TickEvent.Phase.START) return;
 
         if (OPEN_SETTINGS_KEY.isPressed()) {
             Minecraft.getMinecraft().displayGuiScreen(new SettingsGUI());
         }
 
-        // Разгребаем очередь отложенных сообщений — только когда игрок уже в мире
         if (!pendingMessages.isEmpty() && Minecraft.getMinecraft().player != null) {
             net.minecraft.util.text.ITextComponent msg;
             while ((msg = pendingMessages.poll()) != null) {

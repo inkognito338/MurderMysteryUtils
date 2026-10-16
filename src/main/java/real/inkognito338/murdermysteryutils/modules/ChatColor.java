@@ -2,6 +2,7 @@ package real.inkognito338.murdermysteryutils.modules;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.play.client.CPacketChatMessage;
+import net.minecraft.scoreboard.Team;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraft.util.text.event.ClickEvent;
@@ -34,8 +35,20 @@ import java.util.logging.Logger;
 public class ChatColor extends Module {
 
     private static final Logger LOGGER = Logger.getLogger(ChatColor.class.getName());
-
+    private static final char[] COLOR_CODES = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+    };
+    private static final String[] COLOR_NAMES = {
+            "Black (&0)", "Dark Blue (&1)", "Dark Green (&2)", "Dark Aqua (&3)",
+            "Dark Red (&4)", "Dark Purple (&5)", "Gold (&6)", "Gray (&7)",
+            "Dark Gray (&8)", "Blue (&9)", "Green (&a)", "Aqua (&b)",
+            "Red (&c)", "Light Purple (&d)", "Yellow (&e)", "White (&f)"
+    };
+    private static final String PREFIX_CHARS = "!@#$";
+    private static final Map<String, char[]> PRESETS = new HashMap<>();
     private static ChatColor INSTANCE;
+
     private final Minecraft mc = Minecraft.getMinecraft();
     private final Setting debug;
     private final Setting mode;
@@ -43,20 +56,46 @@ public class ChatColor extends Module {
     private boolean logInitialized = false;
     private File currentLogFile;
     private boolean registered = false;
+    /**
+     * Флаг активности модуля. Нужен, потому что режим Packet работает через миксин
+     * и прямые вызовы processXxx, которые не зависят от регистрации на EVENT_BUS.
+     */
+    private volatile boolean active = false;
 
-    private static final char[] COLOR_CODES = {
-            '0', '1', '2', '3', '4', '5', '6', '7',
-            '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
-    };
+    static {
+        // Огонь: красный → золото → жёлтый → тёмно-красный
+        PRESETS.put("Fire", new char[]{'c', '6', 'e', '4'});
+        // Лёд: синий → аква → тёмно-синий → белый
+        PRESETS.put("Ice", new char[]{'9', 'b', '1', 'f'});
+        // Галактика: тёмно-фиолетовый → фиолетовый → тёмно-синий → аква
+        PRESETS.put("Galaxy", new char[]{'5', 'd', '1', 'b'});
+        // Закат: тёмно-красный → красный → золото → жёлтый
+        PRESETS.put("Sunset", new char[]{'4', 'c', '6', 'e'});
+        // Призрак: тёмно-серый → серый → белый → аква
+        PRESETS.put("Ghost", new char[]{'8', '7', 'f', 'b'});
+        // Гроза: жёлтый → белый → аква → тёмно-аква
+        PRESETS.put("Thunder", new char[]{'e', 'f', 'b', '3'});
+        // Кровь: красный → тёмно-красный → тёмно-серый
+        PRESETS.put("Blood", new char[]{'c', '4', '8'});
+        // Киберпанк: зелёный → аква → тёмно-аква → розовый → жёлтый → золото
+        PRESETS.put("Cyberpunk", new char[]{'a', 'b', '3', 'd', 'e', '6'});
 
-    private static final String[] COLOR_NAMES = {
-            "Black (&0)",       "Dark Blue (&1)",    "Dark Green (&2)", "Dark Aqua (&3)",
-            "Dark Red (&4)",    "Dark Purple (&5)",  "Gold (&6)",       "Gray (&7)",
-            "Dark Gray (&8)",   "Blue (&9)",         "Green (&a)",      "Aqua (&b)",
-            "Red (&c)",         "Light Purple (&d)", "Yellow (&e)",     "White (&f)"
-    };
-
-    private static final String PREFIX_CHARS = "!@#$";
+        // ─── Новые ───
+        // Неон: зелёный → аква → розовый → жёлтый
+        PRESETS.put("Neon", new char[]{'a', 'b', 'd', 'e'});
+        // Океан: тёмно-синий → синий → тёмно-аква → аква
+        PRESETS.put("Ocean", new char[]{'1', '9', '3', 'b'});
+        // Токсик: тёмно-зелёный → зелёный → жёлтый → тёмно-серый
+        PRESETS.put("Toxic", new char[]{'2', 'a', 'e', '8'});
+        // Мята: тёмно-зелёный → зелёный → белый → аква (свежий, холодный)
+        PRESETS.put("Mint", new char[]{'2', 'a', 'f', 'b'});
+        // Корона: тёмно-синий → фиолетовый → розовый → золото → жёлтый
+        PRESETS.put("Royal", new char[]{'1', '5', 'd', '6', 'e'});
+        // Радуга: красный → золото → жёлтый → зелёный → аква → синий → розовый
+        PRESETS.put("Rainbow", new char[]{'c', '6', 'e', 'a', 'b', '9', 'd'});
+        // Конфетка: розовый → белый → аква → жёлтый
+        PRESETS.put("Candy", new char[]{'d', 'f', 'b', 'e'});
+    }
 
     public ChatColor() {
         super("ChatColor");
@@ -73,12 +112,17 @@ public class ChatColor extends Module {
         addSetting(new Setting("ChatType", SettingType.MODE, "Auto",
                 "Auto", "1.10 (100 chars)", "1.11+ (255 chars)"));
 
-        addSetting(new Setting("ColorStyle", SettingType.MODE, "Auto",
-                "Auto", "PerLetter", "PerWord"));
+        addSetting(new Setting("ColorStyle", SettingType.MODE, "PerLetter",
+                new String[]{"PerLetter", "PerWord"}
+        ));
 
+        addSetting(new Setting("Sequence", SettingType.MODE, "Random",
+                new String[]{"Random", "Static"}
+        ));
         addSetting(new Setting("Preset", SettingType.MODE, "None",
-                "None", "Rainbow", "Fire", "Ice", "Pastel", "Neon", "Galaxy", "Sunset", "Candy"));
-
+                new String[]{"None", "Cyberpunk", "Thunder", "Blood", "Fire", "Ice", "Galaxy",
+                        "Sunset", "Ghost", "Neon", "Ocean", "Toxic", "Mint", "Royal", "Rainbow", "Candy"}
+        ));
         for (int i = 0; i < COLOR_CODES.length; i++) {
             addSetting(new Setting(COLOR_NAMES[i], SettingType.BOOLEAN, true));
         }
@@ -92,8 +136,24 @@ public class ChatColor extends Module {
         return (String) mode.getValue();
     }
 
+    private String getSequence() {
+        Setting s = getSettingByName("Sequence");
+        return (s != null && s.getValue() instanceof String) ? (String) s.getValue() : "Random";
+    }
+
+    /**
+     * Включён ли модуль. Миксин должен проверять это перед вызовом processMessageFromMixin.
+     */
+    public boolean isActive() {
+        return active;
+    }
+
+    // ─── Обработка сообщения (вызывается из миксина на EntityPlayerSP#sendChatMessage) ──
+
     @Override
     public void onEnable() {
+        active = true;
+
         if (!registered) {
             MinecraftForge.EVENT_BUS.register(this);
             registered = true;
@@ -104,27 +164,43 @@ public class ChatColor extends Module {
         }
 
         logDebug("ChatColor enabled, mode: " + getCurrentMode());
-        LOGGER.fine("ChatColor enabled, INSTANCE=" + INSTANCE + ", mode=" + getCurrentMode());
     }
+
+    // ─── Обработка пакета (устаревший путь, оставлен для совместимости) ──
 
     @Override
     public void onDisable() {
+        // Сначала гасим флаг — после этого все публичные точки входа становятся no-op
+        active = false;
+
         if (registered) {
             MinecraftForge.EVENT_BUS.unregister(this);
             registered = false;
         }
-        closeLogFile();
-        logDebug("ChatColor disabled");
-    }
 
-    // ─── Обработка сообщения (вызывается из миксина на EntityPlayerSP#sendChatMessage) ──
+        // Сначала пишем в лог, потом закрываем файл:
+        // иначе logDebug после closeLogFile() заново создаст лог-файл
+        logDebug("ChatColor disabled");
+        closeLogFile();
+    }
 
     /**
      * Публичная точка входа для миксина. Работает со строкой ДО того,
      * как она превратится в CPacketChatMessage — так что перехватывается
      * любой путь отправки чата, независимо от того, как именно создаётся пакет.
+     * <p>
+     * Работает только когда модуль включён и выбран режим Packet.
+     * В режиме ClientChat сообщение обрабатывает onClientChat.
      */
     public String processMessageFromMixin(String message) {
+        if (!active) {
+            return message;
+        }
+
+        if (!"Packet".equals(getCurrentMode())) {
+            return message;
+        }
+
         LOGGER.fine("processMessageFromMixin: original=\"" + message + "\"");
 
         if (message == null || message.isEmpty()) {
@@ -152,7 +228,7 @@ public class ChatColor extends Module {
         return processed;
     }
 
-    // ─── Обработка пакета (устаревший путь, оставлен для совместимости) ──
+    // ─── Логирование ───────────────────────────────────────────────────────
 
     /**
      * @deprecated Используй processMessageFromMixin вместо этого — обработка на уровне
@@ -160,6 +236,9 @@ public class ChatColor extends Module {
      */
     @Deprecated
     public void processPacketInPlace(CPacketChatMessage packet) {
+        if (!active) return;
+        if (!"Packet".equals(getCurrentMode())) return;
+
         try {
             Field messageField = CPacketChatMessage.class.getDeclaredField("message");
             messageField.setAccessible(true);
@@ -197,6 +276,9 @@ public class ChatColor extends Module {
 
     @Deprecated
     public CPacketChatMessage processPacket(CPacketChatMessage packet) {
+        if (!active) return packet;
+        if (!"Packet".equals(getCurrentMode())) return packet;
+
         try {
             Field messageField = CPacketChatMessage.class.getDeclaredField("message");
             messageField.setAccessible(true);
@@ -228,8 +310,6 @@ public class ChatColor extends Module {
         return packet;
     }
 
-    // ─── Логирование ───────────────────────────────────────────────────────
-
     private void closeLogFile() {
         try {
             if (logWriter != null) {
@@ -238,8 +318,11 @@ public class ChatColor extends Module {
             }
             logInitialized = false;
             currentLogFile = null;
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
+
+    // ─── Helpers ────────────────────────────────────────────────────────────────
 
     private void initLogFile() {
         try {
@@ -284,6 +367,9 @@ public class ChatColor extends Module {
     private void logDebug(String text) {
         if (!((boolean) debug.getValue())) return;
 
+        // Не создаём лог-файл заново, если модуль выключен
+        if (!active && !logInitialized) return;
+
         if (!logInitialized && logWriter == null) {
             initLogFile();
         }
@@ -294,47 +380,57 @@ public class ChatColor extends Module {
                 logWriter.write("[" + timestamp + "] " + text);
                 logWriter.newLine();
                 logWriter.flush();
-            } catch (IOException ignored) {}
-        }
-    }
-
-    // ─── Helpers ────────────────────────────────────────────────────────────────
-
-    private int getMaxLength() {
-        Setting s = getSettingByName("ChatType");
-        String modeVal = (s != null && s.getValue() instanceof String) ? (String) s.getValue() : "Auto";
-        switch (modeVal) {
-            case "1.10 (100 chars)":  return 100;
-            case "1.11+ (255 chars)": return 256;
-            default:
-                try {
-                    String ver = Minecraft.getMinecraft().getVersion();
-                    if (ver.startsWith("1.8")) return 100;
-                } catch (Exception ignored) {}
-                return 256;
+            } catch (IOException ignored) {
+            }
         }
     }
 
     // ─── Presets ────────────────────────────────────────────────────────────────
 
-    private static final Map<String, char[]> PRESETS = new HashMap<>();
-    static {
-        // Радуга: полный спектр по порядку (не перемешивается — см. colorizeSmart)
-        PRESETS.put("Rainbow", new char[]{'c', '6', 'e', 'a', 'b', '9', 'd'});
-        // Огонь: красный, золото, жёлтый, тёмно-красный — энергичный, "пацанский"
-        PRESETS.put("Fire", new char[]{'c', '6', 'e', '4'});
-        // Лёд: синий, аква, тёмно-синий, белый — холодный, строгий
-        PRESETS.put("Ice", new char[]{'9', 'b', '1', 'f'});
-        // Пастель: мягкие светлые тона, нравится многим независимо от пола
-        PRESETS.put("Pastel", new char[]{'d', 'b', 'e', 'f'});
-        // Неон: яркие кислотные тона, молодёжный стиль
-        PRESETS.put("Neon", new char[]{'a', 'd', 'b', 'e'});
-        // Галактика: фиолетовый, тёмно-синий, аква — таинственный, космический
-        PRESETS.put("Galaxy", new char[]{'5', 'd', '1', 'b'});
-        // Закат: тёплый градиент от красного к жёлтому через фиолетовый
-        PRESETS.put("Sunset", new char[]{'4', 'c', '6', 'd'});
-        // Конфеты: розовый, красный, жёлтый, белый — яркий и "милый"
-        PRESETS.put("Candy", new char[]{'d', 'c', 'e', 'f'});
+    private int getMaxLength() {
+        Setting s = getSettingByName("ChatType");
+        String modeVal = (s != null && s.getValue() instanceof String) ? (String) s.getValue() : "Auto";
+        switch (modeVal) {
+            case "1.10 (100 chars)":
+                return 100;
+            case "1.11+ (255 chars)":
+                return 256;
+            default:
+                return detectMaxLengthByTeam();
+        }
+    }
+
+    /**
+     * Auto: определяем версию по названию team игрока.
+     * Последняя буква названия == 'Q' -> 1.11+ (256), иначе 100.
+     * Если team нет или произошла ошибка — безопасные 100
+     * (превышение лимита на 1.10 приводит к отклонению сообщения).
+     */
+    private int detectMaxLengthByTeam() {
+        try {
+            if (mc.player == null) return 100;
+
+            Team team = mc.player.getTeam();
+            if (team == null) {
+                logDebug("Auto: player has no team, fallback to 100");
+                return 100;
+            }
+
+            String teamName = team.getName();
+            if (teamName == null || teamName.isEmpty()) {
+                logDebug("Auto: empty team name, fallback to 100");
+                return 100;
+            }
+
+            char last = teamName.charAt(teamName.length() - 1);
+            boolean modern = (last == 'Q');
+            logDebug("Auto: team=\"" + teamName + "\", last='" + last + "' -> "
+                    + (modern ? "1.11+ (256)" : "1.10 (100)"));
+            return modern ? 256 : 100;
+        } catch (Exception e) {
+            logDebug("Auto: team detection error: " + e.getMessage());
+            return 100;
+        }
     }
 
     private String getPreset() {
@@ -365,116 +461,96 @@ public class ChatColor extends Module {
         return active;
     }
 
-    /**
-     * Стейтфул-хелпер для выдачи цветов по кругу в ОДНОМ И ТОМ ЖЕ порядке.
-     * Порядок перемешивается один раз при создании (случайно), а дальше
-     * просто циклически повторяется: например красный-зелёный-синий-
-     * красный-зелёный-синий-... на всё сообщение.
-     */
-    private static final class ColorRotator {
-        private final List<Character> order;
-        private int index = 0;
-
-        ColorRotator(List<Character> available, Random random, boolean shuffle) {
-            this.order = new ArrayList<>(available);
-            if (shuffle) {
-                Collections.shuffle(this.order, random);
-            }
-        }
-
-        private ColorRotator(List<Character> fixedOrder) {
-            this.order = fixedOrder;
-        }
-
-        /** Создаёт новый ротатор с уже готовым (зафиксированным) порядком цветов, index сбрасывается на 0. */
-        static ColorRotator fromOrder(List<Character> fixedOrder) {
-            return new ColorRotator(fixedOrder);
-        }
-
-        /** Возвращает копию текущего порядка цветов (для повторных независимых проходов). */
-        List<Character> snapshotOrder() {
-            return new ArrayList<>(order);
-        }
-
-        char next() {
-            char chosen = order.get(index);
-            index = (index + 1) % order.size();
-            return chosen;
-        }
-    }
-
     private String getColorStyle() {
         Setting s = getSettingByName("ColorStyle");
-        return (s != null && s.getValue() instanceof String) ? (String) s.getValue() : "Auto";
+        return (s != null && s.getValue() instanceof String) ? (String) s.getValue() : "PerLetter";
     }
 
+    /**
+     * PerWord   — цвет делится по словам.
+     * PerLetter — цвет делится по буквам (любое другое значение, в том числе
+     *             устаревшее "Auto" из старых конфигов, трактуется как PerLetter).
+     * В обоих режимах, если сообщение не влезает в лимит, группа (букв или слов)
+     * на один цвет растёт, пока всё не поместится.
+     */
     private String colorizeSmart(String text, int availableSpace) {
         List<Character> active = getActiveColors();
         if (active.isEmpty() || text.isEmpty()) return text;
 
         Random random = new Random();
-        boolean shuffleOrder = !"Rainbow".equals(getPreset());
+        boolean shuffleOrder = "Random".equals(getSequence());
         ColorRotator rotator = new ColorRotator(active, random, shuffleOrder);
 
-        String style = getColorStyle();
-
-        if ("PerWord".equals(style)) {
+        if ("PerWord".equals(getColorStyle())) {
             return colorizePerWord(text, availableSpace, rotator);
         }
-
-        // Считаем доступное пространство для цветовых кодов (&X -> 2 символа),
-        // используя урезанную по availableSpace длину — это релевантно только
-        // для посимвольного режима, где 1 буква = 1 код.
-        String forLetterCheck = text.length() > availableSpace ? text.substring(0, availableSpace) : text;
-        int freeSpace = availableSpace - forLetterCheck.length();
-        int maxCodes = freeSpace / 2;
-
-        if ("PerLetter".equals(style)) {
-            return colorizePerLetter(text, availableSpace, rotator);
-        }
-
-        // "Auto": посимвольно, если хватает места под коды, иначе по словам
-        if (maxCodes >= forLetterCheck.length()) {
-            return colorizePerLetter(text, availableSpace, rotator);
-        }
-        return colorizePerWord(text, availableSpace, rotator);
+        return colorizePerLetter(text, availableSpace, rotator);
     }
 
     /**
-     * Красит каждую букву индивидуально по очереди из ротатора.
-     * Пробелы цвет не получают и не сдвигают счётчик ротатора.
+     * PerLetter: пробует группы по 1, 2, 3... буквы на один цвет и берёт первую,
+     * которая влезает в availableSpace. Пробелы цвет не получают и в группу не считаются.
+     * Если не влезает даже с одним цветом на всё сообщение, обрезаем (крайний случай).
      */
     private String colorizePerLetter(String text, int availableSpace, ColorRotator rotator) {
+        int letters = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) != ' ') letters++;
+        }
+        if (letters == 0) return text;
+
+        List<Character> colorOrder = rotator.snapshotOrder();
+
+        for (int groupSize = 1; groupSize <= letters; groupSize++) {
+            ColorRotator attempt = ColorRotator.fromOrder(colorOrder);
+            String candidate = buildLetterGroups(text, groupSize, attempt);
+            if (candidate.length() <= availableSpace) {
+                logDebug("PerLetter: letters per color = " + groupSize);
+                return candidate;
+            }
+        }
+
+        // Даже один цвет на всё не помещается, значит сам текст длиннее лимита
+        String candidate = buildLetterGroups(text, letters, ColorRotator.fromOrder(colorOrder));
+        return candidate.length() > availableSpace ? candidate.substring(0, availableSpace) : candidate;
+    }
+
+    /**
+     * Красит буквы группами по groupSize штук: первые groupSize букв одним цветом,
+     * следующие groupSize следующим и т.д. Пробелы остаются как есть
+     * (цветовой код действует и через пробел, отдельный код на него не нужен).
+     */
+    private String buildLetterGroups(String text, int groupSize, ColorRotator rotator) {
         StringBuilder result = new StringBuilder();
+        int inGroup = 0;
+        boolean haveColor = false;
+
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
 
             if (c == ' ') {
-                if (result.length() + 1 <= availableSpace) {
-                    result.append(c);
-                }
+                result.append(c);
                 continue;
             }
 
-            char color = rotator.next();
-            String piece = "&" + color + c;
-            if (result.length() + piece.length() <= availableSpace) {
-                result.append(piece);
-            } else {
-                break;
+            if (!haveColor || inGroup >= groupSize) {
+                result.append('&').append(rotator.next());
+                haveColor = true;
+                inGroup = 0;
             }
+            result.append(c);
+            inGroup++;
         }
         return result.toString();
     }
 
     /**
-     * Красит текст по словам, группируя несколько слов подряд под один цвет.
+     * PerWord: красит текст по словам, группируя несколько слов подряд под один цвет.
      * Чем больше слов в группе — тем меньше всего цветовых кодов &X в тексте,
      * тем больше места остаётся под сами буквы. Алгоритм подбирает минимальный
-     * размер группы (начиная с 1 слову = 1 цвет), при котором весь текст
-     * помещается в availableSpace — то есть уменьшает КОЛИЧЕСТВО цветовых
-     * кодов, а не сами слова. Слова никогда не обрезаются, кроме полного
-     * провала (текста физически больше лимита даже без единого цвета).
+     * размер группы (начиная с 1 слово = 1 цвет), при котором весь текст
+     * помещается в availableSpace. Слова никогда не обрезаются, кроме полного
+     * провала (текста физически больше лимита даже с одним цветом).
      */
     private String colorizePerWord(String text, int availableSpace, ColorRotator rotator) {
         String[] words = text.split(" ", -1);
@@ -495,12 +571,13 @@ public class ChatColor extends Module {
             ColorRotator attempt = ColorRotator.fromOrder(colorOrder);
             String candidate = buildGrouped(words, groupSize, attempt);
             if (candidate.length() <= availableSpace) {
+                logDebug("PerWord: words per color = " + groupSize);
                 return candidate;
             }
         }
 
         // Даже один цвет на всё сообщение не помог уместиться —
-        // текста физически больше лимита, обрезаем по буквам (крайний случай).
+        // текста физически больше лимита, обрезаем (крайний случай).
         return buildTruncated(words, availableSpace);
     }
 
@@ -536,7 +613,7 @@ public class ChatColor extends Module {
 
     /**
      * Крайний случай: даже один цвет на всё сообщение не помог уместиться —
-     * обрезаем по буквам с конца, красим первым доступным цветом целиком.
+     * обрезаем по буквам с конца.
      */
     private String buildTruncated(String[] words, int availableSpace) {
         StringBuilder result = new StringBuilder();
@@ -565,14 +642,13 @@ public class ChatColor extends Module {
         return result.toString();
     }
 
-    // ─── Core processing ──────────────────────────────────────────────────────
-
     /**
      * Сделан публичным, чтобы вызываться напрямую как из ClientChatEvent,
      * так и из миксина на sendChatMessage.
      */
     public String processChatMessage(String originalMessage) {
         if (originalMessage == null || originalMessage.isEmpty()) return originalMessage;
+        if (!active) return originalMessage;
 
         char first = originalMessage.charAt(0);
         if (first == '/' || first == '.' || first == '-') {
@@ -607,10 +683,12 @@ public class ChatColor extends Module {
         return finalMessage;
     }
 
-    // ─── Event: ClientChatEvent (для режима ClientChat) ─────────────────────
+    // ─── Core processing ──────────────────────────────────────────────────────
 
     @SubscribeEvent
     public void onClientChat(ClientChatEvent event) {
+        if (!active) return;
+
         String currentMode = getCurrentMode();
         if (!"ClientChat".equals(currentMode)) {
             logDebug("Skipping ClientChatEvent, mode: " + currentMode);
@@ -632,6 +710,73 @@ public class ChatColor extends Module {
         String processed = processChatMessage(msg);
         if (processed != null && !processed.isEmpty()) {
             mc.player.sendChatMessage(processed);
+        }
+    }
+
+    // ─── Event: ClientChatEvent (для режима ClientChat) ─────────────────────
+
+    /**
+     * Для миксина/хендлеров: модуль включён и выбран режим Packet.
+     */
+    public boolean isPacketModeActive() {
+        return active && "Packet".equals((String) mode.getValue());
+    }
+
+    /**
+     * Стейтфул-хелпер для выдачи цветов по кругу в ОДНОМ И ТОМ ЖЕ порядке.
+     * Порядок (при Random) перемешивается один раз при создании, а дальше
+     * циклически повторяется. Соседние выданные цвета никогда не совпадают
+     * (если в наборе больше одного уникального цвета).
+     */
+    private static final class ColorRotator {
+        private final List<Character> order;
+        private final int distinctCount;
+        private int index = 0;
+        private char last = 0;
+        private boolean hasLast = false;
+
+        ColorRotator(List<Character> available, Random random, boolean shuffle) {
+            this.order = new ArrayList<>(available);
+            if (shuffle) {
+                Collections.shuffle(this.order, random);
+            }
+            this.distinctCount = new HashSet<>(this.order).size();
+        }
+
+        private ColorRotator(List<Character> fixedOrder) {
+            this.order = fixedOrder;
+            this.distinctCount = new HashSet<>(fixedOrder).size();
+        }
+
+        /**
+         * Создаёт новый ротатор с уже готовым (зафиксированным) порядком цветов, index сбрасывается на 0.
+         */
+        static ColorRotator fromOrder(List<Character> fixedOrder) {
+            return new ColorRotator(fixedOrder);
+        }
+
+        /**
+         * Возвращает копию текущего порядка цветов (для повторных независимых проходов).
+         */
+        List<Character> snapshotOrder() {
+            return new ArrayList<>(order);
+        }
+
+        /**
+         * Следующий цвет по кругу. Если он совпал с предыдущим выданным,
+         * пропускаем его (возможно только при повторах в списке или на стыке цикла).
+         * Если в наборе всего один уникальный цвет, повтора не избежать.
+         */
+        char next() {
+            char chosen;
+            do {
+                chosen = order.get(index);
+                index = (index + 1) % order.size();
+            } while (distinctCount > 1 && hasLast && chosen == last);
+
+            last = chosen;
+            hasLast = true;
+            return chosen;
         }
     }
 }

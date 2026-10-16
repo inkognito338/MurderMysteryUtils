@@ -35,16 +35,14 @@ import java.util.Set;
 @SideOnly(Side.CLIENT)
 public class AutoNext extends Module {
 
-    private static AutoNext INSTANCE;
-    private final Minecraft mc = Minecraft.getMinecraft();
     private static final String HANDLER_NAME = "auto_next_handler";
-
     // ====== СТРОГИЙ ВАЙТЛИСТ КОМАНД ======
     private static final Set<String> ALLOWED_COMMANDS = new HashSet<>(Arrays.asList(
             "/next",
             "/random-arena"
     ));
-
+    private static AutoNext INSTANCE;
+    private final Minecraft mc = Minecraft.getMinecraft();
     private long roleDetectionTime = 0;
     private long deathDetectionTime = 0;
     private boolean secondCommandSent = false;
@@ -107,12 +105,18 @@ public class AutoNext extends Module {
     private boolean shouldExecuteForState(String state) {
         if (state == null) return false;
         switch (state) {
-            case "INNOCENT": return (boolean) getSettingByName("OnInnocent").getValue();
-            case "DETECTIVE": return (boolean) getSettingByName("OnDetective").getValue();
-            case "MURDERER": return (boolean) getSettingByName("OnMurderer").getValue();
-            case "DEATH": return (boolean) getSettingByName("OnDeath").getValue();
-            case "GAME_END": return (boolean) getSettingByName("AutoNextGameEnd").getValue();
-            default: return false;
+            case "INNOCENT":
+                return (boolean) getSettingByName("OnInnocent").getValue();
+            case "DETECTIVE":
+                return (boolean) getSettingByName("OnDetective").getValue();
+            case "MURDERER":
+                return (boolean) getSettingByName("OnMurderer").getValue();
+            case "DEATH":
+                return (boolean) getSettingByName("OnDeath").getValue();
+            case "GAME_END":
+                return (boolean) getSettingByName("AutoNextGameEnd").getValue();
+            default:
+                return false;
         }
     }
 
@@ -229,7 +233,8 @@ public class AutoNext extends Module {
                                     super.channelRead(ctx, msg);
                                 }
                             });
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     private void removeHandler() {
@@ -239,7 +244,8 @@ public class AutoNext extends Module {
                     mc.getConnection().getNetworkManager().channel().pipeline().remove(HANDLER_NAME);
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     private void handlePacket(Object packet) {
@@ -279,11 +285,6 @@ public class AutoNext extends Module {
     @SubscribeEvent
     public void onClientDisconnected(FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
         removeHandler();
-    }
-
-    @SubscribeEvent
-    public void onChat(ClientChatReceivedEvent event) {
-        processMessage(event.getMessage(), "chat");
     }
 
     @SubscribeEvent

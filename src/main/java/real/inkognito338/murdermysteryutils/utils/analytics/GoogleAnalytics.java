@@ -1,4 +1,4 @@
-package real.inkognito338.murdermysteryutils.utils;
+package real.inkognito338.murdermysteryutils.utils.analytics;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -9,6 +9,7 @@ import okhttp3.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import real.inkognito338.murdermysteryutils.Main;
+import real.inkognito338.murdermysteryutils.utils.CertManager;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
@@ -26,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  * Date: 14.10.2026
  */
 
-public class Analytics {
+public class GoogleAnalytics {
 
     private static final boolean DEBUG = false;
 

@@ -24,6 +24,7 @@ import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 import real.inkognito338.murdermysteryutils.utils.Module;
+import real.inkognito338.murdermysteryutils.utils.ModuleManager;
 import real.inkognito338.murdermysteryutils.utils.settings.Setting;
 import real.inkognito338.murdermysteryutils.utils.settings.SettingType;
 
@@ -111,6 +112,9 @@ public class FakeGM extends Module {
         if (mc.player.ticksExisted % 100 == 0) {
             injectHandler();
         }
+
+        Module freecam = ModuleManager.getModuleByName("Freecam");
+        if (freecam != null && freecam.isToggled()) return;
 
         // --- 1. Каждый тик проверяем геймтайп ---
         GameType selected = getSelectedGameType();

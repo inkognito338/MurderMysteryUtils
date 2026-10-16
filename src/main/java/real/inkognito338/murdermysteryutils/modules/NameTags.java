@@ -46,11 +46,10 @@ public class NameTags extends Module {
     private final MurderAPI murderAPI = MurderAPI.getInstance();
 
     // ================= Настройки модуля =================
-    private final Setting roleMode = new Setting("Role Mode", SettingType.MODE, "Full", "Full", "Short", "Hidden");
-    private final Setting colorMode = new Setting("Color Mode", SettingType.MODE, "Role Text", "Role Text", "Nickname", "Background", "Outline");
+    private final Setting roleMode = new Setting("Role Mode", SettingType.MODE, "Hidden", "Full", "Short", "Hidden");
+    private final Setting colorMode = new Setting("Color Mode", SettingType.MODE, "Outline", "Role Text", "Nickname", "Background", "Outline");
     private final Setting showPing = new Setting("Show Ping", SettingType.BOOLEAN, true);
     private final Setting showHead = new Setting("Show Head", SettingType.BOOLEAN, true);
-    private final Setting throughWalls = new Setting("Through Walls", SettingType.BOOLEAN, false);
 
     public NameTags() {
         super("NameTags");
@@ -58,7 +57,6 @@ public class NameTags extends Module {
         addSetting(colorMode);
         addSetting(showPing);
         addSetting(showHead);
-        addSetting(throughWalls);
     }
 
     @Override
@@ -213,14 +211,9 @@ public class NameTags extends Module {
         GlStateManager.rotate(mc.getRenderManager().playerViewX, mc.gameSettings.thirdPersonView == 2 ? -1.0F : 1.0F, 0.0F, 0.0F);
         GlStateManager.scale(-scale, -scale, scale);
 
-        boolean isThroughWalls = (Boolean) throughWalls.getValue();
-        if (isThroughWalls) {
-            GlStateManager.disableDepth();
-            GlStateManager.depthMask(false);
-        } else {
-            GlStateManager.enableDepth();
-            GlStateManager.depthMask(true);
-        }
+        // Всегда рендерим сквозь стены (стандартное поведение)
+        GlStateManager.disableDepth();
+        GlStateManager.depthMask(false);
 
         GlStateManager.disableLighting();
         GlStateManager.enableBlend();

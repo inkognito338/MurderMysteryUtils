@@ -13,11 +13,14 @@ import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.RenderGlobal;
 import net.minecraft.entity.Entity;
 import net.minecraft.inventory.EntityEquipmentSlot;
-import net.minecraft.network.INetHandler;
 import net.minecraft.network.NetworkManager;
-import net.minecraft.network.Packet;
-import net.minecraft.network.play.INetHandlerPlayClient;
+import net.minecraft.network.play.client.CPacketAnimation;
+import net.minecraft.network.play.client.CPacketEntityAction;
 import net.minecraft.network.play.client.CPacketPlayer;
+import net.minecraft.network.play.client.CPacketPlayerDigging;
+import net.minecraft.network.play.client.CPacketPlayerTryUseItem;
+import net.minecraft.network.play.client.CPacketPlayerTryUseItemOnBlock;
+import net.minecraft.network.play.client.CPacketUseEntity;
 import net.minecraft.network.play.server.SPacketChangeGameState;
 import net.minecraft.network.play.server.SPacketChunkData;
 import net.minecraft.network.play.server.SPacketJoinGame;
@@ -45,6 +48,7 @@ import real.inkognito338.murdermysteryutils.utils.settings.Setting;
 import real.inkognito338.murdermysteryutils.utils.settings.SettingType;
 
 import java.lang.reflect.Field;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,10 +56,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Project: MurderMysteryUtils
  * Author: inkognito338
- * Date: 26.09.2026
+ * Date: 15.10.2026
  * <p>
  * Freecam — клиентская имитация гейммода 3 (спектатор), как будто сервер выдал /gamemode 3.
- * Пока модуль включён, исходящие CPacketPlayer отбрасываются, поэтому сервер движения не видит.
+ * Пока модуль включён, исходящие пакеты движения/поворота/шифта/ПКМ-ЛКМ-атаки отбрасываются,
+ * поэтому сервер движения и действий не видит.
  * Сам модуль серверу никаких пакетов не отправляет.
  * При выключении игрок возвращается на реальную позицию, а режим и abilities — к тем,
  * которые сервер считает настоящими.
@@ -64,14 +69,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * с ESP-боксом, видимым сквозь стены, чтобы было видно, где игрок стоит на самом деле.
  * <p>
  * Входящие пакеты, меняющие состояние (телепорт, смена мира, режим игры, abilities),
- * обрабатываются атомарно: одна задача главного потока выполняет ванильную обработку пакета
- * и сразу за ней возвращает клиентский спектатор. Ванильная обработка выполняется всегда,
- * даже если наша логика до/после неё упала с исключением.
+ * НЕ обрабатываются вручную: они проходят по пайплайну штатно (ванильная обработка и Forge-хендлеры
+ * работают как обычно), а наша логика ставится в очередь главного потока строго до и строго после
+ * ванильной задачи: before -> ванилла -> after -> applySpectator.
  * <p>
  * Скорость, noClip и abilities выставляются заново КАЖДЫЙ тик (обе фазы ClientTickEvent),
- * в начале тика игрока (PlayerTickEvent.START) и прямо перед движением (InputUpdateEvent),
- * поэтому смена мира, телепорт или abilities от сервера не могут надолго сбить скорость.
- * Это не зависит от записи NetworkPlayerInfo и от snapshot'ов.
+ * в начале тика игрока (PlayerTickEvent.START) и прямо перед движением (InputUpdateEvent).
  * <p>
  * Телепорт считается «близким» (камера остаётся) только если чанк назначения загружен И лежит
  * в пределах дальности прорисовки от камеры; иначе камера переносится на место телепорта.
@@ -83,6 +86,49 @@ import java.util.concurrent.ConcurrentHashMap;
 @SideOnly(Side.CLIENT)
 public class Freecam extends Module {
 
+    // ===================== DEBUG =====================
+    /** Главный переключатель дебаг-лога (true = пишем в консоль/latest.log). */
+    private static final boolean DEBUG = false;
+    /** Подробный лог каждого тика / каждого заблокированного пакета (очень много строк). Работает только при DEBUG = true. */
+    private static final boolean DEBUG_VERBOSE = false;
+    /** Как часто (в тиках) писать сводку состояния, когда DEBUG_VERBOSE = false. 0 = выключено. */
+    private static final int DEBUG_STATE_INTERVAL = 100;
+    private static final String LOG_PREFIX = "[Freecam]";
+
+
+
+    private static void dbg(String fmt, Object... args) {
+        if (!DEBUG) {
+            return;
+        }
+        try {
+            String text = args == null || args.length == 0 ? fmt : String.format(Locale.ROOT, fmt, args);
+            System.out.println(LOG_PREFIX + "[" + Thread.currentThread().getName() + "] " + text);
+        } catch (Throwable t) {
+            System.out.println(LOG_PREFIX + " <log format error: " + fmt + " / " + t + ">");
+        }
+    }
+
+    private static void dbgErr(String where, Throwable t) {
+        if (!DEBUG) {
+            // Ошибки печатаем всегда, чтобы не терять их при выключенном дебаге
+            t.printStackTrace();
+            return;
+        }
+        System.out.println(LOG_PREFIX + "[" + Thread.currentThread().getName() + "] ERROR in " + where + ": " + t);
+        t.printStackTrace();
+    }
+
+    private static String pkName(Object o) {
+        return o == null ? "null" : o.getClass().getSimpleName();
+    }
+
+    // Счётчики для сводок
+    private int dbgTickCounter = 0;
+    private volatile int dbgBlockedOut = 0;
+    private volatile int dbgPassedIn = 0;
+    // ==================================================
+
     private static final String HANDLER_NAME = "mmu_freecam_blocker";
 
     // Отрицательный id, чтобы не пересечься с серверными сущностями
@@ -90,6 +136,9 @@ public class Freecam extends Module {
 
     // Цвет ESP-бокса (RGBA)
     private static final float ESP_R = 0.2f, ESP_G = 1.0f, ESP_B = 0.4f, ESP_A = 1.0f;
+
+    // SPacketChangeGameState.CHANGE_GAME_MODE (значение 3)
+    private static final int CHANGE_GAME_MODE_STATE = 3;
 
     // Поле gameType в NetworkPlayerInfo ищем по типу, чтобы не зависеть от MCP/SRG-имён
     private static Field infoGameTypeField;
@@ -105,7 +154,9 @@ public class Freecam extends Module {
             }
         } catch (Throwable t) {
             infoGameTypeField = null;
+            dbgErr("static init (reflection)", t);
         }
+        dbg("static init: infoGameTypeField = %s", infoGameTypeField);
     }
 
     private final Minecraft mc = Minecraft.getMinecraft();
@@ -137,12 +188,17 @@ public class Freecam extends Module {
     public Freecam() {
         super("Freecam");
         this.addSetting(new Setting("Speed", SettingType.NUMBER, 3.0, 1.0, 10.0));
+        dbg("constructed, DEBUG=%s VERBOSE=%s", DEBUG, DEBUG_VERBOSE);
     }
 
     @Override
     public void onEnable() {
+        dbg("onEnable() called: active=%s player=%s controller=%s connection=%s",
+                active, mc.player != null, mc.playerController != null, mc.getConnection() != null);
+
         // active: повторный onEnable запомнил бы позицию/режим КАМЕРЫ как «реальные»
         if (active || mc.player == null || mc.playerController == null || mc.getConnection() == null) {
+            dbg("onEnable() aborted (already active or world not ready)");
             return;
         }
 
@@ -157,9 +213,15 @@ public class Freecam extends Module {
         NetworkPlayerInfo info = getInfo();
         realInfoType = info != null ? info.getGameType() : null;
 
+        dbg("onEnable: saved real pos=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f controllerType=%s infoType=%s",
+                realX, realY, realZ, realYaw, realPitch, realControllerType, realInfoType);
+
         snapshotCapabilities();
         forceNextTeleport = false;
         pendingUnloads.clear();
+        dbgTickCounter = 0;
+        dbgBlockedOut = 0;
+        dbgPassedIn = 0;
 
         // Фейк создаём до смены режима, пока скин/слои/экипировка ещё «обычные»
         spawnFake();
@@ -168,10 +230,12 @@ public class Freecam extends Module {
             installBlocker();
             active = true;
             MinecraftForge.EVENT_BUS.register(this);
+            dbg("onEnable: blocker installed, event bus registered, active=true");
             applySpectator();
+            dbg("onEnable: DONE");
         } catch (Throwable t) {
             // Откат: не оставляем хендлер/фейка/режим в полуживом состоянии
-            t.printStackTrace();
+            dbgErr("onEnable (rollback)", t);
             active = false;
             MinecraftForge.EVENT_BUS.unregister(this);
             removeBlocker();
@@ -181,6 +245,7 @@ public class Freecam extends Module {
 
     @Override
     public void onDisable() {
+        dbg("onDisable() called: active=%s", active);
         if (!active) {
             return;
         }
@@ -188,12 +253,15 @@ public class Freecam extends Module {
         MinecraftForge.EVENT_BUS.unregister(this);
         removeBlocker();
         removeFake();
+        dbg("onDisable: stats blockedOut=%d passedIn(state packets)=%d pendingUnloads=%d",
+                dbgBlockedOut, dbgPassedIn, pendingUnloads.size());
 
         // Применяем выгрузки, которые сервер присылал, пока мы летали
         flushPendingUnloads();
 
         // Возвращаем реальный режим
         GameType infoType = realInfoType != null ? realInfoType : realControllerType;
+        dbg("onDisable: restoring infoType=%s controllerType=%s", infoType, realControllerType);
         setInfoType(infoType);
         if (mc.playerController != null && realControllerType != null) {
             mc.playerController.setGameType(realControllerType);
@@ -201,6 +269,8 @@ public class Freecam extends Module {
 
         EntityPlayerSP p = mc.player;
         if (p != null) {
+            dbg("onDisable: camera was at (%.3f, %.3f, %.3f), returning to (%.3f, %.3f, %.3f)",
+                    p.posX, p.posY, p.posZ, realX, realY, realZ);
             p.setPositionAndRotation(realX, realY, realZ, realYaw, realPitch);
             p.noClip = false;
             p.motionX = p.motionY = p.motionZ = 0;
@@ -211,7 +281,13 @@ public class Freecam extends Module {
             p.capabilities.disableDamage = capDisableDamage;
             p.capabilities.setFlySpeed(capFlySpeed);
             p.capabilities.setPlayerWalkSpeed(capWalkSpeed);
+            dbg("onDisable: restored abilities allowFlying=%s isFlying=%s disableDamage=%s flySpeed=%.4f walkSpeed=%.4f",
+                    p.capabilities.allowFlying, p.capabilities.isFlying, p.capabilities.disableDamage,
+                    capFlySpeed, capWalkSpeed);
+        } else {
+            dbg("onDisable: mc.player == null, nothing to restore");
         }
+        dbg("onDisable: DONE");
     }
 
     /**
@@ -225,6 +301,7 @@ public class Freecam extends Module {
         }
         // Дисконнект / выгрузка мира: выключаемся сами, чтобы не осталось висящего состояния
         if (mc.player == null || mc.world == null) {
+            dbg("onClientTick: player/world is null (disconnect?) -> auto disable");
             active = false;
             MinecraftForge.EVENT_BUS.unregister(this);
             removeBlocker();
@@ -234,12 +311,41 @@ public class Freecam extends Module {
             return;
         }
 
+        if (DEBUG && event.phase == TickEvent.Phase.END) {
+            dbgTickCounter++;
+            if (DEBUG_VERBOSE || (DEBUG_STATE_INTERVAL > 0 && dbgTickCounter % DEBUG_STATE_INTERVAL == 0)) {
+                dumpState("tick#" + dbgTickCounter);
+            }
+        }
+
         ensureBlocker();
         applySpectator();
 
         if (event.phase == TickEvent.Phase.END) {
             updateFake();
         }
+    }
+
+    /** Сводка текущего состояния (только для дебага). */
+    private void dumpState(String reason) {
+        if (!DEBUG) {
+            return;
+        }
+        EntityPlayerSP p = mc.player;
+        if (p == null) {
+            dbg("STATE[%s]: player=null", reason);
+            return;
+        }
+        dbg("STATE[%s]: cam=(%.2f, %.2f, %.2f) real=(%.2f, %.2f, %.2f) dist=%.2f | ctrl=%s info=%s | "
+                        + "fly=%s/%s dmg=%s flySpd=%.4f noClip=%s | fake=%s pendingUnloads=%d blockedOut=%d passedIn=%d",
+                reason, p.posX, p.posY, p.posZ, realX, realY, realZ,
+                Math.sqrt((p.posX - realX) * (p.posX - realX) + (p.posY - realY) * (p.posY - realY)
+                        + (p.posZ - realZ) * (p.posZ - realZ)),
+                mc.playerController != null ? mc.playerController.getCurrentGameType() : null,
+                getInfo() != null ? getInfo().getGameType() : null,
+                p.capabilities.allowFlying, p.capabilities.isFlying, p.capabilities.disableDamage,
+                p.capabilities.getFlySpeed(), p.noClip,
+                fake != null, pendingUnloads.size(), dbgBlockedOut, dbgPassedIn);
     }
 
     /**
@@ -258,10 +364,13 @@ public class Freecam extends Module {
             return;
         }
         boolean connectionChanged = nm != cur;
+        dbg("ensureBlocker: handler missing! connectionChanged=%s (old nm=%s, cur nm=%s) -> reinstalling",
+                connectionChanged, nm, cur);
         removeBlocker();
         installBlocker();
         if (connectionChanged && mc.playerController != null) {
             // Новое соединение = новый мир/игрок: считаем это сменой мира
+            dbg("ensureBlocker: connection changed -> treating as world change");
             onWorldChange(mc.playerController.getCurrentGameType());
         }
     }
@@ -274,17 +383,22 @@ public class Freecam extends Module {
         if (!active || event.side != Side.CLIENT || event.player != mc.player) {
             return;
         }
+        if (DEBUG_VERBOSE) {
+            dbg("onPlayerTick phase=%s", event.phase);
+        }
         enforceFlight();
     }
 
     /**
      * Срабатывает внутри EntityPlayerSP.onLivingUpdate, прямо перед движением.
-     * Дублируем принудительную установку, не завися от таба.
      */
     @SubscribeEvent
     public void onInputUpdate(InputUpdateEvent event) {
         if (!active || mc.player == null || event.getEntityPlayer() != mc.player) {
             return;
+        }
+        if (DEBUG_VERBOSE) {
+            dbg("onInputUpdate");
         }
         mc.player.onGround = false;
         enforceFlight();
@@ -292,14 +406,15 @@ public class Freecam extends Module {
 
     /**
      * Срабатывает в начале EntityLivingBase.onLivingUpdate — уже ПОСЛЕ логики спринта в EntityPlayerSP
-     * и непосредственно перед travel. Ванильный travel удваивает скорость полёта при isSprinting(),
-     * а флаг спринта сбрасывается/выставляется заново при телепорте, смене мира и респавне,
-     * из-за чего скорость «скачет» вдвое. Гасим спринт, чтобы скорость всегда равнялась настройке Speed.
+     * и непосредственно перед travel. Гасим спринт, чтобы скорость всегда равнялась настройке Speed.
      */
     @SubscribeEvent
     public void onLivingUpdate(net.minecraftforge.event.entity.living.LivingEvent.LivingUpdateEvent event) {
         if (!active || mc.player == null || event.getEntityLiving() != mc.player) {
             return;
+        }
+        if (DEBUG_VERBOSE) {
+            dbg("onLivingUpdate (sprint=%s)", mc.player.isSprinting());
         }
         mc.player.setSprinting(false);
         mc.player.onGround = false;
@@ -313,6 +428,9 @@ public class Freecam extends Module {
         }
         Entity view = mc.getRenderViewEntity();
         if (view == null) {
+            if (DEBUG_VERBOSE) {
+                dbg("onRenderWorld: renderViewEntity == null, skip");
+            }
             return;
         }
 
@@ -323,8 +441,11 @@ public class Freecam extends Module {
 
         AxisAlignedBB box = fake.getEntityBoundingBox().grow(0.002).offset(-vx, -vy, -vz);
 
-        // Запоминаем реальные состояния GL и возвращаем ровно их: в RenderWorldLastEvent, например,
-        // освещение выключено, и безусловный enableLighting() ломает весь GUI (чат, таб, текстуры)
+        if (DEBUG_VERBOSE) {
+            dbg("onRenderWorld: pt=%.3f view=(%.2f, %.2f, %.2f) box=%s", pt, vx, vy, vz, box);
+        }
+
+        // Запоминаем реальные состояния GL и возвращаем ровно их
         final boolean wasLighting = GL11.glIsEnabled(GL11.GL_LIGHTING);
         final boolean wasTexture = GL11.glIsEnabled(GL11.GL_TEXTURE_2D);
         final boolean wasDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
@@ -343,6 +464,9 @@ public class Freecam extends Module {
             GL11.glLineWidth(2.0f);
 
             RenderGlobal.drawSelectionBoundingBox(box, ESP_R, ESP_G, ESP_B, ESP_A);
+        } catch (Throwable t) {
+            dbgErr("onRenderWorld", t);
+            throw t;
         } finally {
             GL11.glLineWidth(1.0f);
             GlStateManager.depthMask(true);
@@ -362,16 +486,21 @@ public class Freecam extends Module {
     private void spawnFake() {
         removeFake();
         if (mc.world == null || mc.player == null) {
+            dbg("spawnFake: world/player null, skip");
             return;
         }
         fake = new FakePlayer(mc.world, mc.player);
         syncFake();
         mc.world.addEntityToWorld(FAKE_ENTITY_ID, fake);
+        dbg("spawnFake: spawned id=%d at (%.3f, %.3f, %.3f)", FAKE_ENTITY_ID, realX, realY, realZ);
     }
 
     private void removeFake() {
         if (mc.world != null) {
             mc.world.removeEntityFromWorld(FAKE_ENTITY_ID);
+        }
+        if (fake != null) {
+            dbg("removeFake: removed id=%d", FAKE_ENTITY_ID);
         }
         fake = null;
     }
@@ -382,6 +511,8 @@ public class Freecam extends Module {
             return;
         }
         if (fake == null || fake.world != mc.world || mc.world.getEntityByID(FAKE_ENTITY_ID) != fake) {
+            dbg("updateFake: fake lost (null=%s, otherWorld=%s) -> respawn",
+                    fake == null, fake != null && fake.world != mc.world);
             spawnFake();
             return;
         }
@@ -409,12 +540,15 @@ public class Freecam extends Module {
                 fake.setItemStackToSlot(slot, p.getItemStackFromSlot(slot).copy());
             }
         }
+        if (DEBUG_VERBOSE) {
+            dbg("syncFake: placed at (%.3f, %.3f, %.3f)", realX, realY, realZ);
+        }
     }
 
     /**
      * Клиентская копия игрока. UUID случайный, чтобы world.getPlayerEntityByUUID не вернул фейка вместо
      * настоящего игрока; скин берём у mc.player. isSpectator = false, иначе ванильный рендер нарисует
-     * только голову (в NetworkPlayerInfo настоящего игрока во freecam стоит SPECTATOR).
+     * только голову.
      */
     private static class FakePlayer extends EntityOtherPlayerMP {
 
@@ -462,6 +596,7 @@ public class Freecam extends Module {
 
     /** Смена мира / измерения / переход между серверами: создан новый игрок. */
     private void onWorldChange(GameType serverType) {
+        dbg("onWorldChange: serverType=%s active=%s player=%s", serverType, active, mc.player != null);
         if (!active || mc.player == null) {
             return;
         }
@@ -473,6 +608,8 @@ public class Freecam extends Module {
         realPitch = p.rotationPitch;
         realControllerType = serverType;
         realInfoType = serverType;
+        dbg("onWorldChange: new real pos=(%.3f, %.3f, %.3f), dropping %d pending unloads",
+                realX, realY, realZ, pendingUnloads.size());
 
         // Мир новый: накопленные выгрузки относились к старому
         pendingUnloads.clear();
@@ -494,6 +631,8 @@ public class Freecam extends Module {
         capDisableDamage = pk.isInvulnerable();
         capFlySpeed = pk.getFlySpeed();
         capWalkSpeed = pk.getWalkSpeed();
+        dbg("onAbilities: allowFlying=%s isFlying=%s invulnerable=%s flySpeed=%.4f walkSpeed=%.4f",
+                capAllowFlying, capIsFlying, capDisableDamage, capFlySpeed, capWalkSpeed);
         applySpectator();
     }
 
@@ -502,6 +641,7 @@ public class Freecam extends Module {
             return;
         }
         GameType type = GameType.getByID((int) pk.getValue());
+        dbg("onGameModeState: server set gamemode %s (raw=%.1f)", type, pk.getValue());
         realControllerType = type;
         realInfoType = type;
         applySpectator();
@@ -517,9 +657,13 @@ public class Freecam extends Module {
                 if (entry.getProfile() != null
                         && mc.player.getUniqueID().equals(entry.getProfile().getId())
                         && entry.getGameMode() != null) {
+                    dbg("onPlayerList: action=%s own entry gamemode %s -> %s",
+                            pk.getAction(), realInfoType, entry.getGameMode());
                     realInfoType = entry.getGameMode();
                 }
             }
+        } else if (DEBUG_VERBOSE) {
+            dbg("onPlayerList: action=%s (ignored)", pk.getAction());
         }
         applySpectator();
     }
@@ -530,6 +674,7 @@ public class Freecam extends Module {
     private void onServerTeleport(SPacketPlayerPosLook pk, double[] cam) {
         EntityPlayerSP p = mc.player;
         if (!active || p == null) {
+            dbg("onServerTeleport: skipped (active=%s player=%s)", active, p != null);
             return;
         }
 
@@ -540,6 +685,11 @@ public class Freecam extends Module {
         float yaw = pk.getFlags().contains(SPacketPlayerPosLook.EnumFlags.Y_ROT) ? realYaw + pk.getYaw() : pk.getYaw();
         float pitch = pk.getFlags().contains(SPacketPlayerPosLook.EnumFlags.X_ROT) ? realPitch + pk.getPitch() : pk.getPitch();
 
+        dbg("onServerTeleport: packet pos=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f flags=%s",
+                pk.getX(), pk.getY(), pk.getZ(), pk.getYaw(), pk.getPitch(), pk.getFlags());
+        dbg("onServerTeleport: resolved dest=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f (old real=(%.3f, %.3f, %.3f))",
+                x, y, z, yaw, pitch, realX, realY, realZ);
+
         // Точка возврата теперь там, куда телепортировал сервер
         realX = x;
         realY = y;
@@ -547,9 +697,6 @@ public class Freecam extends Module {
         realYaw = yaw;
         realPitch = pitch;
 
-        // Телепорт «близкий», только если чанк назначения загружен И он в пределах
-        // дальности прорисовки от камеры. Сервер часто шлёт чанки назначения ДО пакета
-        // телепорта, поэтому одной проверки «загружен ли чанк» мало.
         int destChunkX = MathHelper.floor(x) >> 4;
         int destChunkZ = MathHelper.floor(z) >> 4;
         int camChunkX = MathHelper.floor(cam[0]) >> 4;
@@ -558,17 +705,21 @@ public class Freecam extends Module {
         boolean targetLoaded = mc.world != null
                 && mc.world.getChunkProvider().getLoadedChunk(destChunkX, destChunkZ) != null;
         int chunkDist = Math.max(Math.abs(destChunkX - camChunkX), Math.abs(destChunkZ - camChunkZ));
-        boolean near = targetLoaded && chunkDist <= Math.max(2, mc.gameSettings.renderDistanceChunks);
+        int maxDist = Math.max(2, mc.gameSettings.renderDistanceChunks);
+        boolean near = targetLoaded && chunkDist <= maxDist;
+
+        dbg("onServerTeleport: destChunk=(%d, %d) camChunk=(%d, %d) targetLoaded=%s chunkDist=%d maxDist=%d near=%s forceNext=%s",
+                destChunkX, destChunkZ, camChunkX, camChunkZ, targetLoaded, chunkDist, maxDist, near, forceNextTeleport);
 
         if (forceNextTeleport || !near) {
             // Смена мира или телепорт за пределы прогруженных чанков: freecam продолжается с нового места
+            dbg("onServerTeleport: -> MOVING CAMERA to destination (%s)", forceNextTeleport ? "forced after world change" : "far/unloaded");
             forceNextTeleport = false;
             p.setPositionAndRotation(x, y, z, yaw, pitch);
             p.motionX = p.motionY = p.motionZ = 0;
         } else {
             // Близкий телепорт: камера остаётся там, где была, вместе с инерцией и интерполяцией.
-            // Ванильный handlePlayerPosLook обнуляет motion (флаги пустые), а сервер в фазах «заморозки»
-            // шлёт PosLook КАЖДЫЙ тик — без восстановления motion камера не разгоняется и скорость падает ~в 10 раз.
+            dbg("onServerTeleport: -> KEEPING camera at (%.3f, %.3f, %.3f), restoring inertia", cam[0], cam[1], cam[2]);
             p.setPositionAndRotation(cam[0], cam[1], cam[2], (float) cam[3], (float) cam[4]);
             p.motionX = cam[5];
             p.motionY = cam[6];
@@ -591,8 +742,12 @@ public class Freecam extends Module {
     // ---------- вспомогательное ----------
 
     private void flushPendingUnloads() {
+        dbg("flushPendingUnloads: applying %d chunk unloads (world=%s)", pendingUnloads.size(), mc.world != null);
         if (mc.world != null) {
             for (ChunkPos c : pendingUnloads) {
+                if (DEBUG_VERBOSE) {
+                    dbg("flushPendingUnloads: unload chunk (%d, %d)", c.x, c.z);
+                }
                 mc.world.doPreChunk(c.x, c.z, false);
             }
         }
@@ -600,54 +755,47 @@ public class Freecam extends Module {
     }
 
     /**
-     * Обрабатывает входящий пакет атомарно в главном потоке:
-     * before -> ванильная обработка -> after -> applySpectator. Порядок относительно остальных пакетов
-     * сохраняется, т.к. задача ставится в ту же очередь, в том порядке, в котором пакеты пришли.
+     * Пропускает пакет дальше по пайплайну ШТАТНО (ванильная обработка + хендлеры Forge), а нашу логику
+     * ставит в очередь главного потока строго вокруг ванильной задачи:
+     * before -> ванилла -> after -> applySpectator.
      * <p>
-     * Обработчик берём у NetworkManager соединения, на которое мы повесили хендлер, а не через
-     * mc.getConnection(): тот возвращает null, когда mc.player ещё/уже null (смена сервера, респавн),
-     * и пакет молча терялся. Ванильная обработка выполняется всегда, наша логика до/после её не блокирует.
-     * Даже если after упал, режим и скорость freecam всё равно восстанавливаются.
+     * Вызывается из Netty-потока канала. Он один на соединение, а ctx.fireChannelRead синхронно
+     * доходит до NetworkManager, который ставит ванильную задачу в ту же очередь, поэтому между
+     * before, ванильной задачей и after другие пакеты не вклиниваются.
+     * Вручную processPacket больше не вызывается: прежний обходной путь через nm.getNetHandler()
+     * мог терять пакеты и ломал обработку, из-за чего приём от сервера «замирал».
      */
-    private void runAtomic(NetworkManager nm, Packet<INetHandlerPlayClient> pk, Runnable before, Runnable after) {
-        mc.addScheduledTask(() -> {
-            if (!nm.isChannelOpen()) {
-                return; // соединение закрыто — ванилла делает то же самое
-            }
-            INetHandler listener = nm.getNetHandler();
-            if (!(listener instanceof INetHandlerPlayClient)) {
-                // Раньше пакет пропадал молча; теперь хотя бы видно в логе
-                System.err.println("[Freecam] пакет " + pk.getClass().getSimpleName()
-                        + " пропущен: netHandler=" + listener);
-                return;
-            }
-            if (before != null) {
-                try {
-                    before.run();
-                } catch (Throwable t) {
-                    t.printStackTrace();
+    private void passAround(ChannelHandlerContext ctx, Object msg, Runnable before, Runnable after) {
+        dbgPassedIn++;
+        dbg("passAround: IN  %s (before=%s, after=%s)", pkName(msg), before != null, after != null);
+        if (before != null) {
+            mc.addScheduledTask(() -> {
+                dbg("passAround: BEFORE task for %s", pkName(msg));
+                runSafe(before);
+            });
+        }
+        try {
+            ctx.fireChannelRead(msg);
+            dbg("passAround: fired %s down the pipeline", pkName(msg));
+        } finally {
+            mc.addScheduledTask(() -> {
+                dbg("passAround: AFTER task for %s", pkName(msg));
+                if (after != null) {
+                    runSafe(after);
                 }
-            }
-            try {
-                pk.processPacket((INetHandlerPlayClient) listener);
-            } finally {
-                try {
-                    if (after != null) {
-                        after.run();
-                    }
-                } catch (Throwable t) {
-                    t.printStackTrace();
-                } finally {
-                    if (active) {
-                        try {
-                            applySpectator();
-                        } catch (Throwable t) {
-                            t.printStackTrace();
-                        }
-                    }
+                if (active) {
+                    runSafe(this::applySpectator);
                 }
-            }
-        });
+            });
+        }
+    }
+
+    private static void runSafe(Runnable r) {
+        try {
+            r.run();
+        } catch (Throwable t) {
+            dbgErr("runSafe", t);
+        }
     }
 
     private void snapshotCapabilities() {
@@ -659,6 +807,8 @@ public class Freecam extends Module {
         capDisableDamage = mc.player.capabilities.disableDamage;
         capFlySpeed = mc.player.capabilities.getFlySpeed();
         capWalkSpeed = mc.player.capabilities.getWalkSpeed();
+        dbg("snapshotCapabilities: allowFlying=%s isFlying=%s disableDamage=%s flySpeed=%.4f walkSpeed=%.4f",
+                capAllowFlying, capIsFlying, capDisableDamage, capFlySpeed, capWalkSpeed);
     }
 
     /** Скорость полёта freecam из настройки Speed (читается каждый раз, поэтому смена на лету работает). */
@@ -690,6 +840,7 @@ public class Freecam extends Module {
             return;
         }
         if (mc.playerController.getCurrentGameType() != GameType.SPECTATOR) {
+            dbg("applySpectator: controller type was %s -> SPECTATOR", mc.playerController.getCurrentGameType());
             mc.playerController.setGameType(GameType.SPECTATOR);
         }
         setInfoType(GameType.SPECTATOR);
@@ -707,12 +858,43 @@ public class Freecam extends Module {
     private void setInfoType(GameType type) {
         NetworkPlayerInfo info = getInfo();
         if (type == null || info == null || infoGameTypeField == null) {
+            if (DEBUG_VERBOSE) {
+                dbg("setInfoType: skipped (type=%s info=%s field=%s)", type, info != null, infoGameTypeField != null);
+            }
             return;
         }
         try {
             infoGameTypeField.set(info, type);
-        } catch (IllegalAccessException ignored) {
+        } catch (IllegalAccessException e) {
+            dbgErr("setInfoType", e);
         }
+    }
+
+    /**
+     * Отменяем только «управляющие» пакеты игрока:
+     * 1. Движение/позиция        — CPacketPlayer.Position, CPacketPlayer.PositionRotation
+     * 2. Поворот камеры          — CPacketPlayer.Rotation, CPacketPlayer.PositionRotation
+     * 3. Шифт (sneak/sprint)     — CPacketEntityAction (START/STOP_SNEAKING, START/STOP_SPRINTING)
+     * 4. ПКМ/ЛКМ и атака         — CPacketPlayerDigging, CPacketPlayerTryUseItem,
+     *                              CPacketPlayerTryUseItemOnBlock, CPacketUseEntity, CPacketAnimation
+     * <p>
+     * Базовый CPacketPlayer (только onGround/полёт) тоже режем — он шлётся каждый тик
+     * и раскрывает движение в воздухе/на земле.
+     * <p>
+     * CPacketEntityAction режем НЕ целиком: riding-jump, open-inventory, elytra и прочее
+     * не относятся к движению/шифту и должны доходить до сервера.
+     */
+    private static boolean shouldBlock(Object msg) {
+        // 4: удары, копание, использование предмета/блока, анимация руки (свинг)
+        if (msg instanceof CPacketPlayerDigging
+                || msg instanceof CPacketPlayerTryUseItem
+                || msg instanceof CPacketPlayerTryUseItemOnBlock
+                || msg instanceof CPacketUseEntity
+                || msg instanceof CPacketEntityAction
+                || msg instanceof CPacketAnimation) {
+            return true;
+        }
+        return false;
     }
 
     private void installBlocker() {
@@ -721,25 +903,37 @@ public class Freecam extends Module {
 
         final NetworkManager nm = mc.getConnection().getNetworkManager();
         ChannelPipeline pipeline = nm.channel().pipeline();
+        dbg("installBlocker: nm=%s pipeline=%s", nm, pipeline.names());
         if (pipeline.get(HANDLER_NAME) != null) {
+            dbg("installBlocker: stale handler found in pipeline, removing");
             pipeline.remove(HANDLER_NAME);
         }
         blockerNm = nm;
 
         // Новый экземпляр на каждое включение: нешаренный хендлер нельзя добавлять повторно
         ChannelDuplexHandler handler = new ChannelDuplexHandler() {
-            // Исходящие: режем все move/rotation пакеты
+            // Исходящие: режем только «управляющие» пакеты игрока (см. shouldBlock)
             @Override
             public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
-                if (active && msg instanceof CPacketPlayer) {
+                if (active && shouldBlock(msg)) {
+                    dbgBlockedOut++;
+                    if (DEBUG_VERBOSE) {
+                        dbg("OUT BLOCKED %s", pkName(msg));
+                    } else if (DEBUG && !(msg instanceof CPacketPlayer)) {
+                        // Базовые пакеты движения шлются каждый тик, их не спамим; остальное логируем
+                        dbg("OUT BLOCKED %s", pkName(msg));
+                    }
                     // trySuccess: setSuccess бросает IllegalStateException, если промис уже завершён
                     promise.trySuccess();
                     return;
                 }
+                if (DEBUG_VERBOSE) {
+                    dbg("OUT pass %s", pkName(msg));
+                }
                 super.write(ctx, msg, promise);
             }
 
-            // Входящие: пакеты, меняющие состояние игрока, обрабатываем сами и атомарно
+            // Входящие: пакеты, меняющие состояние игрока, пропускаем штатно, но с нашими задачами вокруг
             @Override
             public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
                 if (!active) {
@@ -751,6 +945,9 @@ public class Freecam extends Module {
                 if (msg instanceof SPacketUnloadChunk) {
                     SPacketUnloadChunk pk = (SPacketUnloadChunk) msg;
                     pendingUnloads.add(new ChunkPos(pk.getX(), pk.getZ()));
+                    if (DEBUG_VERBOSE) {
+                        dbg("IN  SPacketUnloadChunk (%d, %d) SWALLOWED, pending=%d", pk.getX(), pk.getZ(), pendingUnloads.size());
+                    }
                     return;
                 }
 
@@ -758,7 +955,10 @@ public class Freecam extends Module {
                 if (msg instanceof SPacketChunkData) {
                     SPacketChunkData pk = (SPacketChunkData) msg;
                     if (pk.isFullChunk()) {
-                        pendingUnloads.remove(new ChunkPos(pk.getChunkX(), pk.getChunkZ()));
+                        boolean removed = pendingUnloads.remove(new ChunkPos(pk.getChunkX(), pk.getChunkZ()));
+                        if (DEBUG_VERBOSE || removed) {
+                            dbg("IN  SPacketChunkData full (%d, %d) cancelPendingUnload=%s", pk.getChunkX(), pk.getChunkZ(), removed);
+                        }
                     }
                     super.channelRead(ctx, msg);
                     return;
@@ -766,9 +966,11 @@ public class Freecam extends Module {
 
                 if (msg instanceof SPacketPlayerPosLook) {
                     final SPacketPlayerPosLook pk = (SPacketPlayerPosLook) msg;
+                    dbg("IN  SPacketPlayerPosLook pos=(%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f flags=%s teleportId=%d",
+                            pk.getX(), pk.getY(), pk.getZ(), pk.getYaw(), pk.getPitch(), pk.getFlags(), pk.getTeleportId());
                     // 0-4 поза камеры, 5-7 motion, 8-10 prevPos, 11-13 lastTickPos, 14-15 prevRotation
                     final double[] cam = new double[16];
-                    runAtomic(nm, pk, () -> {
+                    passAround(ctx, msg, () -> {
                         EntityPlayerSP p = mc.player;
                         if (p != null) {
                             cam[0] = p.posX;
@@ -787,6 +989,10 @@ public class Freecam extends Module {
                             cam[13] = p.lastTickPosZ;
                             cam[14] = p.prevRotationYaw;
                             cam[15] = p.prevRotationPitch;
+                            dbg("PosLook BEFORE: camera snapshot (%.3f, %.3f, %.3f) yaw=%.2f pitch=%.2f",
+                                    cam[0], cam[1], cam[2], cam[3], cam[4]);
+                        } else {
+                            dbg("PosLook BEFORE: mc.player == null, snapshot empty");
                         }
                     }, () -> onServerTeleport(pk, cam));
                     return;
@@ -794,50 +1000,65 @@ public class Freecam extends Module {
 
                 if (msg instanceof SPacketJoinGame) {
                     final SPacketJoinGame pk = (SPacketJoinGame) msg;
-                    runAtomic(nm, pk, null, () -> onWorldChange(pk.getGameType()));
+                    dbg("IN  SPacketJoinGame gameType=%s dimension=%d", pk.getGameType(), pk.getDimension());
+                    passAround(ctx, msg, null, () -> onWorldChange(pk.getGameType()));
                     return;
                 }
 
                 if (msg instanceof SPacketRespawn) {
                     final SPacketRespawn pk = (SPacketRespawn) msg;
-                    runAtomic(nm, pk, null, () -> onWorldChange(pk.getGameType()));
+                    dbg("IN  SPacketRespawn gameType=%s dimension=%d", pk.getGameType(), pk.getDimensionID());
+                    passAround(ctx, msg, null, () -> onWorldChange(pk.getGameType()));
                     return;
                 }
 
                 if (msg instanceof SPacketPlayerAbilities) {
                     final SPacketPlayerAbilities pk = (SPacketPlayerAbilities) msg;
-                    runAtomic(nm, pk, null, () -> onAbilities(pk));
+                    dbg("IN  SPacketPlayerAbilities");
+                    passAround(ctx, msg, null, () -> onAbilities(pk));
                     return;
                 }
 
                 if (msg instanceof SPacketChangeGameState
-                        && ((SPacketChangeGameState) msg).getGameState() == 3) {
+                        && ((SPacketChangeGameState) msg).getGameState() == CHANGE_GAME_MODE_STATE) {
                     final SPacketChangeGameState pk = (SPacketChangeGameState) msg;
-                    runAtomic(nm, pk, null, () -> onGameModeState(pk));
+                    dbg("IN  SPacketChangeGameState(gamemode) value=%.1f", pk.getValue());
+                    passAround(ctx, msg, null, () -> onGameModeState(pk));
                     return;
                 }
 
                 if (msg instanceof SPacketPlayerListItem) {
                     final SPacketPlayerListItem pk = (SPacketPlayerListItem) msg;
-                    runAtomic(nm, pk, null, () -> onPlayerList(pk));
+                    if (DEBUG_VERBOSE) {
+                        dbg("IN  SPacketPlayerListItem action=%s entries=%d", pk.getAction(), pk.getEntries().size());
+                    }
+                    passAround(ctx, msg, null, () -> onPlayerList(pk));
                     return;
                 }
 
                 super.channelRead(ctx, msg);
+            }
+
+            @Override
+            public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+                dbgErr("netty handler exceptionCaught", cause);
+                super.exceptionCaught(ctx, cause);
             }
         };
 
         // Перед packet_handler, иначе входящие пакеты до нас не дойдут
         if (pipeline.get("packet_handler") != null) {
             pipeline.addBefore("packet_handler", HANDLER_NAME, handler);
+            dbg("installBlocker: added BEFORE packet_handler");
         } else {
             pipeline.addLast(HANDLER_NAME, handler);
+            dbg("installBlocker: packet_handler not found, added LAST");
         }
+        dbg("installBlocker: pipeline now = %s", pipeline.names());
     }
 
     private void removeBlocker() {
-        // Снимаем с того соединения, на которое ставили. Через mc.getConnection() это не работало:
-        // он null при mc.player == null и мог указывать на другое соединение — хендлер оставался висеть.
+        // Снимаем с того соединения, на которое ставили
         NetworkManager nm = blockerNm;
         blockerNm = null;
         if (nm == null || nm.channel() == null) {
@@ -846,6 +1067,9 @@ public class Freecam extends Module {
         ChannelPipeline pipeline = nm.channel().pipeline();
         if (pipeline.get(HANDLER_NAME) != null) {
             pipeline.remove(HANDLER_NAME);
+            dbg("removeBlocker: handler removed from nm=%s", nm);
+        } else {
+            dbg("removeBlocker: handler was already absent on nm=%s", nm);
         }
     }
 }

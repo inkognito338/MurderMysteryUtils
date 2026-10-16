@@ -2,6 +2,7 @@ package real.inkognito338.murdermysteryutils.modules;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.init.MobEffects;
+import net.minecraft.item.ItemBow;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.player.AttackEntityEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -33,6 +34,7 @@ public class Sprint extends Module {
         String[] modes = {"Always", "Forward"};
         this.addSetting(new Setting("Mode", SettingType.MODE, "Forward", modes));
         this.addSetting(new Setting("KeepSprint", SettingType.BOOLEAN, true));
+        this.addSetting(new Setting("NoSprintBow", SettingType.BOOLEAN, true));
     }
 
     @Override
@@ -41,7 +43,7 @@ public class Sprint extends Module {
         mc = Minecraft.getMinecraft();
         pendingRestore = false;
         wasMoving = false;
-        if (mc.player != null) {
+        if (mc.player != null && !isDrawingBow()) {
             mc.player.setSprinting(true);
         }
     }
@@ -56,11 +58,30 @@ public class Sprint extends Module {
         }
     }
 
+    /**
+     * true, если включена настройка NoSprintBow и игрок сейчас натягивает лук
+     */
+    private boolean isDrawingBow() {
+        if (mc == null || mc.player == null) return false;
+        if (!(boolean) getSettingByName("NoSprintBow").getValue()) return false;
+        return mc.player.isHandActive()
+                && mc.player.getActiveItemStack().getItem() instanceof ItemBow;
+    }
+
     @SubscribeEvent
     public void onPlayerTickEnd(TickEvent.PlayerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
         if (mc == null || mc.player == null || event.player != mc.player) return;
         if (pendingRestore) return;
+
+        // Пока натягиваем лук — спринт выключен и не включается обратно
+        if (isDrawingBow()) {
+            if (mc.player.isSprinting()) {
+                mc.player.setSprinting(false);
+            }
+            wasMoving = mc.player.moveForward != 0 || mc.player.moveStrafing != 0;
+            return;
+        }
 
         String mode = (String) getSettingByName("Mode").getValue();
         boolean moving = mc.player.moveForward != 0 || mc.player.moveStrafing != 0;
@@ -106,6 +127,8 @@ public class Sprint extends Module {
         pendingRestore = false;
         mc.player.motionX = savedMotionX;
         mc.player.motionZ = savedMotionZ;
-        mc.player.setSprinting(true);
+        if (!isDrawingBow()) {
+            mc.player.setSprinting(true);
+        }
     }
 }

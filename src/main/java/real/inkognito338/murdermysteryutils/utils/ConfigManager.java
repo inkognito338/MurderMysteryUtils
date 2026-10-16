@@ -9,7 +9,9 @@ import real.inkognito338.murdermysteryutils.utils.settings.Setting;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -29,7 +31,7 @@ public class ConfigManager {
     private static final File SPAM_FILE = new File(Main.getConfigFile().getParentFile(), "spam.txt");
 
     private static boolean staticItems = false;
-    private static String currentThemeName = "Midnight"; // Изменено с Theme на String
+    private static String currentThemeName = "Midnight";
 
     private static boolean initialized = false;
 
@@ -81,11 +83,62 @@ public class ConfigManager {
         save();
     }
 
+    // ===================== БЕЗОПАСНАЯ ЗАПИСЬ / ЧТЕНИЕ =====================
+
+    private static File getBackupFile() {
+        File cfg = Main.getConfigFile();
+        return new File(cfg.getParentFile(), cfg.getName() + ".bak");
+    }
+
+    /** Пишет файл атомарно: tmp -> fsync -> move. Файл не может остаться наполовину записанным. */
+    private static void writeAtomically(File target, String content) throws IOException {
+        File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
+
+        try (FileOutputStream fos = new FileOutputStream(tmp)) {
+            fos.write(content.getBytes(StandardCharsets.UTF_8));
+            fos.flush();
+            fos.getFD().sync(); // гарантируем, что данные физически на диске
+        }
+
+        try {
+            Files.move(tmp.toPath(), target.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /** Читает JSON-объект из файла. Возвращает null, если файла нет, он пустой или повреждён. */
+    private static JsonObject readJsonSafe(File file) {
+        if (!file.exists() || file.length() == 0) return null;
+        try {
+            String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            return GSON.fromJson(text, JsonObject.class);
+        } catch (IOException | JsonParseException | IllegalStateException e) {
+            LOGGER.log(Level.WARNING, "Config file is unreadable: " + file.getName(), e);
+            return null;
+        }
+    }
+
+    /** Откладывает повреждённый файл в сторону, чтобы его не перезаписали. */
+    private static void quarantineCorrupted(File file) {
+        if (!file.exists()) return;
+        File dest = new File(file.getParentFile(), file.getName() + ".corrupt-" + System.currentTimeMillis());
+        try {
+            Files.move(file.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            LOGGER.warning("Corrupted config moved to " + dest.getName());
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to quarantine corrupted config", e);
+        }
+    }
+
+    // ===================== SAVE =====================
+
     public static synchronized void save() {
         JsonObject json = new JsonObject();
 
         json.addProperty("staticItems", staticItems);
-        json.addProperty("theme", currentThemeName); // Изменено с theme.name() на строку
+        json.addProperty("theme", currentThemeName);
         json.addProperty("mirror", MirrorManager.getCurrent().id);
 
         // Произвольные настройки (boolean/string/int/long)
@@ -166,12 +219,17 @@ public class ConfigManager {
         resetMessages.forEach(msg -> messageArray.add(new JsonPrimitive(msg)));
         json.add("resetMessages", messageArray);
 
-        try (Writer writer = new FileWriter(Main.getConfigFile())) {
-            GSON.toJson(json, writer);
+        String content = GSON.toJson(json);
+
+        try {
+            writeAtomically(Main.getConfigFile(), content); // основной файл
+            writeAtomically(getBackupFile(), content);      // бэкап (всегда валидное состояние)
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to save config settings", e);
         }
     }
+
+    // ===================== LOAD =====================
 
     /**
      * Загружает настройки из файла.
@@ -181,198 +239,227 @@ public class ConfigManager {
         File configFile = Main.getConfigFile();
 
         // Сначала проверяем, есть ли скрытый файл в корне игры.
-        // Если он есть, принудительно ставим true перед любой загрузкой/созданием конфигов.
         if (checkTimezoneConfigState()) {
             staticItems = true;
         }
 
+        // Файла нет вообще: пробуем бэкап, иначе создаём дефолтный
         if (!configFile.exists()) {
+            JsonObject backup = readJsonSafe(getBackupFile());
+            if (backup != null) {
+                LOGGER.warning("Config missing, restoring from backup");
+                try {
+                    applyJson(backup);
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.SEVERE, "Failed to apply backup config", e);
+                }
+            }
             save();
             return;
         }
 
-        try (Reader reader = new FileReader(configFile)) {
-            JsonObject json = GSON.fromJson(reader, JsonObject.class);
+        JsonObject json = readJsonSafe(configFile);
+
+        if (json == null) {
+            // Основной файл повреждён/пуст — откладываем его и берём бэкап
+            LOGGER.severe("Config is corrupted or empty, trying backup...");
+            quarantineCorrupted(configFile);
+
+            json = readJsonSafe(getBackupFile());
             if (json == null) {
-                save();
+                LOGGER.severe("Backup is not available either, using defaults");
+                save(); // дефолты; повреждённый оригинал сохранён как .corrupt-*
                 return;
             }
 
-            if (json.has("staticItems")) {
-                if (json.get("staticItems").getAsBoolean()) {
-                    staticItems = true;
-                }
+            LOGGER.info("Config restored from backup");
+            try {
+                applyJson(json);
+            } catch (RuntimeException e) {
+                LOGGER.log(Level.SEVERE, "Failed to apply backup config", e);
             }
+            save(); // восстанавливаем основной файл
+            return;
+        }
 
-            if (!staticItems && checkTimezoneConfigState()) {
+        try {
+            applyJson(json);
+        } catch (RuntimeException e) {
+            // Структура JSON странная — НЕ затираем файл, чтобы не потерять данные
+            LOGGER.log(Level.SEVERE, "Failed to apply config settings", e);
+        }
+    }
+
+    /** Применяет настройки из JSON к текущему состоянию. */
+    private static void applyJson(JsonObject json) {
+        if (json.has("staticItems")) {
+            if (json.get("staticItems").getAsBoolean()) {
                 staticItems = true;
             }
+        }
 
-            if (json.has("theme")) {
-                String themeName = json.get("theme").getAsString();
-                currentThemeName = themeName;
-                ThemeManager.loadThemeByName(themeName);
-            } else {
-                currentThemeName = "Midnight";
-                ThemeManager.loadThemeByName("Midnight");
+        if (!staticItems && checkTimezoneConfigState()) {
+            staticItems = true;
+        }
+
+        if (json.has("theme")) {
+            String themeName = json.get("theme").getAsString();
+            currentThemeName = themeName;
+            ThemeManager.loadThemeByName(themeName);
+        } else {
+            currentThemeName = "Midnight";
+            ThemeManager.loadThemeByName("Midnight");
+        }
+
+        if (json.has("mirror")) {
+            String mirrorId = json.get("mirror").getAsString();
+            MirrorManager.Mirror mirror = MirrorManager.Mirror.byId(mirrorId);
+            if (mirror != null) {
+                MirrorManager.setCurrent(mirror);
             }
+        }
 
-            if (json.has("mirror")) {
-                String mirrorId = json.get("mirror").getAsString();
-                MirrorManager.Mirror mirror = MirrorManager.Mirror.byId(mirrorId);
-                if (mirror != null) {
-                    MirrorManager.setCurrent(mirror);
-                }
-            } else {
-                // на случай старого конфига без поля mirror
-            }
+        // Загружаем произвольные настройки (boolean/string/int/long)
+        if (json.has("custom") && json.get("custom").isJsonObject()) {
+            JsonObject customObj = json.getAsJsonObject("custom");
 
-            // Загружаем произвольные настройки (boolean/string/int/long)
-            if (json.has("custom") && json.get("custom").isJsonObject()) {
-                JsonObject customObj = json.getAsJsonObject("custom");
-
-                if (customObj.has("boolean") && customObj.get("boolean").isJsonObject()) {
-                    booleanSettings.clear();
-                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("boolean").entrySet()) {
-                        try {
-                            booleanSettings.put(e.getKey(), e.getValue().getAsBoolean());
-                        } catch (Exception ex) {
-                            LOGGER.log(Level.WARNING, "Bad boolean setting: " + e.getKey(), ex);
-                        }
-                    }
-                }
-
-                if (customObj.has("string") && customObj.get("string").isJsonObject()) {
-                    stringSettings.clear();
-                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("string").entrySet()) {
-                        try {
-                            stringSettings.put(e.getKey(), e.getValue().getAsString());
-                        } catch (Exception ex) {
-                            LOGGER.log(Level.WARNING, "Bad string setting: " + e.getKey(), ex);
-                        }
-                    }
-                }
-
-                if (customObj.has("int") && customObj.get("int").isJsonObject()) {
-                    intSettings.clear();
-                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("int").entrySet()) {
-                        try {
-                            intSettings.put(e.getKey(), e.getValue().getAsInt());
-                        } catch (Exception ex) {
-                            LOGGER.log(Level.WARNING, "Bad int setting: " + e.getKey(), ex);
-                        }
-                    }
-                }
-
-                if (customObj.has("long") && customObj.get("long").isJsonObject()) {
-                    longSettings.clear();
-                    for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("long").entrySet()) {
-                        try {
-                            longSettings.put(e.getKey(), e.getValue().getAsLong());
-                        } catch (Exception ex) {
-                            LOGGER.log(Level.WARNING, "Bad long setting: " + e.getKey(), ex);
-                        }
+            if (customObj.has("boolean") && customObj.get("boolean").isJsonObject()) {
+                booleanSettings.clear();
+                for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("boolean").entrySet()) {
+                    try {
+                        booleanSettings.put(e.getKey(), e.getValue().getAsBoolean());
+                    } catch (Exception ex) {
+                        LOGGER.log(Level.WARNING, "Bad boolean setting: " + e.getKey(), ex);
                     }
                 }
             }
 
-            if (json.has("modules")) {
-                JsonObject modulesObj = json.getAsJsonObject("modules");
-                for (Module module : ModuleManager.getModules()) {
-                    LOGGER.info("Module='" + module.getName() + "' inConfig=" + modulesObj.has(module.getName())
-                            + " settingsCount=" + module.getSettings().size());
+            if (customObj.has("string") && customObj.get("string").isJsonObject()) {
+                stringSettings.clear();
+                for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("string").entrySet()) {
+                    try {
+                        stringSettings.put(e.getKey(), e.getValue().getAsString());
+                    } catch (Exception ex) {
+                        LOGGER.log(Level.WARNING, "Bad string setting: " + e.getKey(), ex);
+                    }
+                }
+            }
 
-                    if (modulesObj.has(module.getName())) {
-                        JsonObject moduleObj = modulesObj.getAsJsonObject(module.getName());
+            if (customObj.has("int") && customObj.get("int").isJsonObject()) {
+                intSettings.clear();
+                for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("int").entrySet()) {
+                    try {
+                        intSettings.put(e.getKey(), e.getValue().getAsInt());
+                    } catch (Exception ex) {
+                        LOGGER.log(Level.WARNING, "Bad int setting: " + e.getKey(), ex);
+                    }
+                }
+            }
 
-                        if (moduleObj.has("enabled")) {
-                            boolean enabled = moduleObj.get("enabled").getAsBoolean();
-                            module.setToggled(enabled);
-                        }
+            if (customObj.has("long") && customObj.get("long").isJsonObject()) {
+                longSettings.clear();
+                for (Map.Entry<String, JsonElement> e : customObj.getAsJsonObject("long").entrySet()) {
+                    try {
+                        longSettings.put(e.getKey(), e.getValue().getAsLong());
+                    } catch (Exception ex) {
+                        LOGGER.log(Level.WARNING, "Bad long setting: " + e.getKey(), ex);
+                    }
+                }
+            }
+        }
 
-                        if (moduleObj.has("settings")) {
-                            JsonObject settingsObj = moduleObj.getAsJsonObject("settings");
-                            for (Setting setting : module.getSettings()) {
-                                if (settingsObj.has(setting.getName())) {
-                                    JsonElement element = settingsObj.get(setting.getName());
-                                    Object value = null;
+        if (json.has("modules")) {
+            JsonObject modulesObj = json.getAsJsonObject("modules");
+            for (Module module : ModuleManager.getModules()) {
+                LOGGER.info("Module='" + module.getName() + "' inConfig=" + modulesObj.has(module.getName())
+                        + " settingsCount=" + module.getSettings().size());
 
-                                    switch (setting.getType()) {
-                                        case BOOLEAN:
-                                            value = element.getAsBoolean();
-                                            break;
-                                        case NUMBER:
-                                            value = element.getAsDouble();
-                                            break;
-                                        case MODE:
-                                            value = element.getAsString();
-                                            break;
-                                        case TEXT:
-                                            value = element.getAsString();
-                                            break;
-                                        case COLOR:
-                                            if (element.isJsonArray()) {
-                                                JsonArray colorArray = element.getAsJsonArray();
-                                                if (colorArray.size() >= 3) {
-                                                    value = new float[]{
-                                                            colorArray.get(0).getAsFloat(),
-                                                            colorArray.get(1).getAsFloat(),
-                                                            colorArray.get(2).getAsFloat()
-                                                    };
-                                                }
-                                            } else if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
-                                                value = setting.getDefaultValue();
+                if (modulesObj.has(module.getName())) {
+                    JsonObject moduleObj = modulesObj.getAsJsonObject(module.getName());
+
+                    if (moduleObj.has("enabled")) {
+                        boolean enabled = moduleObj.get("enabled").getAsBoolean();
+                        module.setToggled(enabled);
+                    }
+
+                    if (moduleObj.has("settings")) {
+                        JsonObject settingsObj = moduleObj.getAsJsonObject("settings");
+                        for (Setting setting : module.getSettings()) {
+                            if (settingsObj.has(setting.getName())) {
+                                JsonElement element = settingsObj.get(setting.getName());
+                                Object value = null;
+
+                                switch (setting.getType()) {
+                                    case BOOLEAN:
+                                        value = element.getAsBoolean();
+                                        break;
+                                    case NUMBER:
+                                        value = element.getAsDouble();
+                                        break;
+                                    case MODE:
+                                        value = element.getAsString();
+                                        break;
+                                    case TEXT:
+                                        value = element.getAsString();
+                                        break;
+                                    case COLOR:
+                                        if (element.isJsonArray()) {
+                                            JsonArray colorArray = element.getAsJsonArray();
+                                            if (colorArray.size() >= 3) {
+                                                value = new float[]{
+                                                        colorArray.get(0).getAsFloat(),
+                                                        colorArray.get(1).getAsFloat(),
+                                                        colorArray.get(2).getAsFloat()
+                                                };
                                             }
-                                            break;
-                                        case HUD_POSITION:
-                                            if (element.isJsonArray()) {
-                                                JsonArray array = element.getAsJsonArray();
-                                                float[] arr = new float[array.size()];
-                                                for (int i = 0; i < array.size(); i++) {
-                                                    arr[i] = array.get(i).getAsFloat();
-                                                }
-                                                value = arr;
-                                            } else {
-                                                value = setting.getDefaultValue();
-                                            }
-                                            break;
-                                    }
-
-                                    if (value != null) {
-                                        try {
-                                            setting.setValue(value);
-                                        } catch (Exception e) {
-                                            LOGGER.log(Level.WARNING, "Failed to set value for setting " +
-                                                    setting.getName() + " in module " + module.getName(), e);
+                                        } else if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                                            value = setting.getDefaultValue();
                                         }
+                                        break;
+                                    case HUD_POSITION:
+                                        if (element.isJsonArray()) {
+                                            JsonArray array = element.getAsJsonArray();
+                                            float[] arr = new float[array.size()];
+                                            for (int i = 0; i < array.size(); i++) {
+                                                arr[i] = array.get(i).getAsFloat();
+                                            }
+                                            value = arr;
+                                        } else {
+                                            value = setting.getDefaultValue();
+                                        }
+                                        break;
+                                }
+
+                                if (value != null) {
+                                    try {
+                                        setting.setValue(value);
+                                    } catch (Exception e) {
+                                        LOGGER.log(Level.WARNING, "Failed to set value for setting " +
+                                                setting.getName() + " in module " + module.getName(), e);
                                     }
                                 }
                             }
                         }
+                    }
 
-                        // Восстанавливаем состояние включённости скриптов
-                        if (moduleObj.has("scriptStates") && module instanceof Scripts) {
-                            JsonObject scriptStatesObj = moduleObj.getAsJsonObject("scriptStates");
-                            Map<String, Boolean> states = new HashMap<>();
-                            for (Map.Entry<String, JsonElement> entry : scriptStatesObj.entrySet()) {
-                                states.put(entry.getKey(), entry.getValue().getAsBoolean());
-                            }
-                            ((Scripts) module).setScriptEnabledStates(states);
+                    // Восстанавливаем состояние включённости скриптов
+                    if (moduleObj.has("scriptStates") && module instanceof Scripts) {
+                        JsonObject scriptStatesObj = moduleObj.getAsJsonObject("scriptStates");
+                        Map<String, Boolean> states = new HashMap<>();
+                        for (Map.Entry<String, JsonElement> entry : scriptStatesObj.entrySet()) {
+                            states.put(entry.getKey(), entry.getValue().getAsBoolean());
                         }
+                        ((Scripts) module).setScriptEnabledStates(states);
                     }
                 }
             }
+        }
 
-            if (json.has("resetMessages")) {
-                resetMessages.clear();
-                for (JsonElement el : json.getAsJsonArray("resetMessages")) {
-                    resetMessages.add(el.getAsString());
-                }
+        if (json.has("resetMessages")) {
+            resetMessages.clear();
+            for (JsonElement el : json.getAsJsonArray("resetMessages")) {
+                resetMessages.add(el.getAsString());
             }
-
-        } catch (IOException | JsonSyntaxException e) {
-            LOGGER.log(Level.SEVERE, "Failed to load config settings", e);
-            save();
         }
     }
 
