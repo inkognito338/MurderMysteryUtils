@@ -1,8 +1,8 @@
 {
   "updater": {
     "enabled": true,
-    "latest_version": "2.1.1",
-    "recommended_version": "2.1.0",
+    "latest_version": "3.1",
+    "recommended_version": "3.1",
     "download_url": "https://github.com/inkognito338/MurderMysteryUtils/releases/latest",
     "versions": {
       "1.0.0": {
@@ -33,11 +33,18 @@
           "ru": "Новый дизайн GUI меню. Оптимизации и чистка кода. Исправлен ESP. Улучшены многие модули."
         }
       },
-      "2.1.0": {
-        "status": "latest",
+      "3.0": {
+        "status": "outdated",
         "changelog": {
           "en": "New GUI menu design. Optimizations and code cleanup. Fixed ESP. Improved many modules. Added: AntiBlind, AutoNext, AutoRoleAnnounce, BarrierVision, CustomTime, CustomWeather, FakeGM1.",
           "ru": "Новый дизайн GUI меню. Оптимизации и чистка кода. Исправлен ESP. Улучшены многие модули. Добавлены: AntiBlind, AutoNext, AutoRoleAnnounce, BarrierVision, CustomTime, CustomWeather, FakeGM1."
+        }
+      },
+      "3.1": {
+        "status": "latest",
+        "changelog": {
+          "en": "Added: ChatLogger, BowAim, TabCompleteFix, InvMove, AntiAFK, CameraClip, NoPitchLimit, FreeCam, FakePing, AntiLag (AncientTomb, Subway), Friend Indicator in ESP, update check mirrors (GitHub/Codeberg/GitLab/GitFlic/Statically/jsDelivr), multiple actions per keybind. Improved: FakeGM (Survival/Creative/Adventure/Spectator), ChatTranslator, CustomTab, ChatColor. Fixed: DiscordRPC, Scripts, AutoNext, config text values not saving. Removed: Spammer.",
+          "ru": "Добавлено: ChatLogger, BowAim, TabCompleteFix, InvMove, AntiAFK, CameraClip, NoPitchLimit, FreeCam, FakePing, AntiLag (AncientTomb, Subway), Friend Indicator в ESP, зеркала проверки обновлений (GitHub/Codeberg/GitLab/GitFlic/Statically/jsDelivr), несколько заданий на одну кнопку в биндах. Улучшено: FakeGM (Survival/Creative/Adventure/Spectator), ChatTranslator, CustomTab, ChatColor. Исправлено: DiscordRPC, Scripts, AutoNext, сохранение текстовых значений в конфиге. Удалено: Spammer."
         }
       }
     }
