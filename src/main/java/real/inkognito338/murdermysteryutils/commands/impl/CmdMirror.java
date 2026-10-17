@@ -1,13 +1,18 @@
 package real.inkognito338.murdermysteryutils.commands.impl;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.util.text.Style;
 import net.minecraft.util.text.TextComponentString;
+import net.minecraft.util.text.event.ClickEvent;
+import net.minecraft.util.text.event.HoverEvent;
 import real.inkognito338.murdermysteryutils.commands.CommandSource;
 import real.inkognito338.murdermysteryutils.utils.API;
 import real.inkognito338.murdermysteryutils.utils.ConfigManager;
+import real.inkognito338.murdermysteryutils.utils.JavaVersionChecker;
 import real.inkognito338.murdermysteryutils.utils.MirrorManager;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Project: MurderMysteryUtils
@@ -22,6 +27,9 @@ import java.util.concurrent.CompletableFuture;
 public class CmdMirror {
 
     private final Minecraft mc = Minecraft.getMinecraft();
+
+    /** Показываем Java-хинт только один раз за вызов .mirror list. */
+    private final AtomicBoolean javaHintShown = new AtomicBoolean(false);
 
     public void run(String[] args, CommandSource source) {
         if (args.length < 2) {
@@ -103,6 +111,7 @@ public class CmdMirror {
      */
     private void printListWithProbe() {
         send("§6Проверка источников:");
+        javaHintShown.set(false); // сбрасываем при каждом новом .mirror list
 
         for (MirrorManager.Mirror m : MirrorManager.Mirror.values()) {
             CompletableFuture.supplyAsync(() -> MirrorManager.probe(m))
@@ -113,10 +122,43 @@ public class CmdMirror {
     private void reportProbeResult(MirrorManager.ProbeResult result) {
         String marker = result.mirror == MirrorManager.getCurrent() ? " §7[активен]" : "";
         String note = result.mirror.recommended ? "" : " §8(не рекомендуется)";
+
         if (result.reachable) {
             send("  §e" + result.mirror.id + marker + note + " §a- доступен §7(" + result.latencyMs + " мс)");
         } else {
-            send("  §e" + result.mirror.id + marker + note + " §c- недоступен §7(" + result.reasonCode + ": " + result.reasonDetail + ")");
+            send("  §e" + result.mirror.id + marker + note + " §c- недоступен §7(" + result.shortDetail + ")");
+
+            // Java-хинт — только при SSL_ERROR и только один раз на весь список
+            if ("SSL_ERROR".equals(result.reasonCode) && javaHintShown.compareAndSet(false, true)) {
+                JavaVersionChecker.Result jv = JavaVersionChecker.check();
+                if (jv.status == JavaVersionChecker.Status.OUTDATED) {
+                    sendJavaHint(jv.currentVersion, jv.latestVersion);
+                }
+            }
+        }
+    }
+
+    private void sendJavaHint(String current, String latest) {
+        String downloadUrl = "https://www.java.com/ru/download/manual.jsp";
+
+        TextComponentString prefix = new TextComponentString(
+                "§7[§6MurderMysteryUtils§7]   §eJava устарела §7(" + current + " → " + latest + ")§e." +
+                        " Обновление может исправить SSL ошибки. Скачать: ");
+
+        TextComponentString link = new TextComponentString("§b" + downloadUrl);
+        link.setStyle(new Style()
+                .setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, downloadUrl))
+                .setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                        new TextComponentString("§7Нажмите чтобы открыть"))));
+
+        TextComponentString suffix = new TextComponentString(
+                " §e— затем выберите новую Java в настройках лаунчера.");
+
+        prefix.appendSibling(link);
+        prefix.appendSibling(suffix);
+
+        if (mc.player != null) {
+            mc.player.sendMessage(prefix);
         }
     }
 

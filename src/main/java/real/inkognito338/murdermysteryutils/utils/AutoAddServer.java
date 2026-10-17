@@ -5,20 +5,20 @@ import com.google.gson.JsonParser;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.ServerList;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.security.KeyStore;
-import java.util.concurrent.TimeUnit;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Project: MurderMysteryUtils
@@ -38,6 +38,9 @@ public class AutoAddServer {
     private static final long   THREE_MONTHS_MS = 90L * 24 * 60 * 60 * 1000;
     private static final String CFG_KEY         = "lastServerAdd";
 
+    private static final int HTTP_TIMEOUT_MS = 5_000;
+    private static final int MAX_REDIRECTS   = 5;
+
     public void init() {
         new Thread(() -> {
             try {
@@ -54,30 +57,19 @@ public class AutoAddServer {
 
                 // 1. Пробуем получить конфиг с GitHub (https → http fallback)
                 try {
-                    String url = CONFIG_URL;
-                    OkHttpClient client = buildHttpClient(true);
-                    Request request = new Request.Builder().url(url).get().build();
-                    Response response = null;
-
+                    String body;
                     try {
-                        response = client.newCall(request).execute();
+                        body = httpGet(CONFIG_URL, true);
                     } catch (Throwable t) {
                         LOGGER.warn("[AutoAddServer] HTTPS не удался, пробуем HTTP: {}", t.getMessage());
-                        url = CONFIG_URL.replace("https://", "http://");
-                        client = buildHttpClient(false);
-                        request = new Request.Builder().url(url).get().build();
-                        response = client.newCall(request).execute();
+                        body = httpGet(CONFIG_URL.replace("https://", "http://"), false);
                     }
 
-                    if (response != null && response.isSuccessful()) {
-                        ResponseBody body = response.body();
-                        if (body != null) {
-                            JsonObject json = new JsonParser().parse(body.string()).getAsJsonObject();
-                            primaryIp  = json.get("primary_ip").getAsString();
-                            fallbackIp = json.get("fallback_ip").getAsString();
-                            serverName = json.get("name").getAsString();
-                            response.close();
-                        }
+                    if (body != null) {
+                        JsonObject json = new JsonParser().parse(body).getAsJsonObject();
+                        primaryIp  = json.get("primary_ip").getAsString();
+                        fallbackIp = json.get("fallback_ip").getAsString();
+                        serverName = json.get("name").getAsString();
                     }
                 } catch (Throwable t) {
                     LOGGER.warn("[AutoAddServer] Не удалось получить конфиг с GitHub, используем дефолтные значения: {}", t.getMessage());
@@ -116,30 +108,69 @@ public class AutoAddServer {
         }, "AutoAddServer").start();
     }
 
-    private OkHttpClient buildHttpClient(boolean useHttps) {
-        if (useHttps) {
+    /**
+     * Возвращает SSLSocketFactory из CertManager или null (дефолтный JVM SSL).
+     */
+    private SSLSocketFactory buildSslFactory() {
+        try {
+            SSLContext ctx = CertManager.getSSLContext();
+            if (ctx != null) {
+                return ctx.getSocketFactory();
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[AutoAddServer] Не удалось создать HTTPS-клиент через CertManager: {}", t.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * GET-запрос. Возвращает тело ответа или null, если код ответа не 2xx.
+     * Сетевые ошибки пробрасываются наружу (нужны для fallback https → http).
+     * Редиректы ведутся вручную, в том числе между http и https (как делал OkHttp).
+     */
+    private String httpGet(String url, boolean useCertManager) throws IOException {
+        SSLSocketFactory factory = useCertManager ? buildSslFactory() : null;
+        String current = url;
+
+        for (int hops = 0; hops <= MAX_REDIRECTS; hops++) {
+            URL u = new URL(current);
+            HttpURLConnection conn = (HttpURLConnection) u.openConnection();
             try {
-                SSLContext ctx = CertManager.getSSLContext();
-                if (ctx != null) {
-                    TrustManagerFactory tmf = TrustManagerFactory.getInstance(
-                            TrustManagerFactory.getDefaultAlgorithm());
-                    tmf.init((KeyStore) null);
-                    X509TrustManager tm = (X509TrustManager) tmf.getTrustManagers()[0];
-                    return new OkHttpClient.Builder()
-                            .connectTimeout(5, TimeUnit.SECONDS)
-                            .readTimeout(5, TimeUnit.SECONDS)
-                            .sslSocketFactory(ctx.getSocketFactory(), tm)
-                            .build();
+                if (factory != null && conn instanceof HttpsURLConnection) {
+                    ((HttpsURLConnection) conn).setSSLSocketFactory(factory);
                 }
-            } catch (Throwable t) {
-                LOGGER.warn("[AutoAddServer] Не удалось создать HTTPS-клиент через CertManager: {}", t.getMessage());
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(HTTP_TIMEOUT_MS);
+                conn.setReadTimeout(HTTP_TIMEOUT_MS);
+                conn.setInstanceFollowRedirects(false);
+
+                int code = conn.getResponseCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null) throw new IOException("Redirect without Location for " + current);
+                    current = new URL(u, location).toString();
+                    continue;
+                }
+                if (code < 200 || code >= 300) {
+                    LOGGER.warn("[AutoAddServer] HTTP {} для {}", code, current);
+                    return null;
+                }
+
+                try (InputStream in = conn.getInputStream()) {
+                    if (in == null) return null;
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        out.write(buf, 0, n);
+                    }
+                    return new String(out.toByteArray(), StandardCharsets.UTF_8);
+                }
+            } finally {
+                conn.disconnect();
             }
         }
-
-        return new OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.SECONDS)
-                .build();
+        throw new IOException("Too many redirects for " + url);
     }
 
     private boolean pingable(String host, int timeout) {

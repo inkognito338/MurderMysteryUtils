@@ -4,29 +4,31 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 import net.minecraft.client.Minecraft;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 import org.luaj.vm2.*;
 import org.luaj.vm2.lib.*;
 import real.inkognito338.murdermysteryutils.Main;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyStore;
 import java.util.concurrent.*;
 
 public class API {
 
-    private static volatile OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .build();
+    private static final int HTTP_TIMEOUT_MS = 5_000;
+
+    /**
+     * null = дефолтный JVM SSL. После SSLHandshakeException подменяется
+     * фабрикой из CertManager (см. rebuildSslFactoryWithFreshCerts).
+     */
+    private static volatile SSLSocketFactory sslFactory = null;
 
     private static volatile boolean scriptLoaded = false;
     private static volatile boolean updateScriptLoaded = false;
@@ -50,22 +52,19 @@ public class API {
 
     // ================= SSL =================
 
-    private static synchronized void rebuildClientWithFreshCerts() {
+    private static synchronized void rebuildSslFactoryWithFreshCerts() {
         try {
-            Main.LOGGER.info("[API] SSL error detected, refreshing certs and rebuilding client...");
+            Main.LOGGER.info("[API] SSL error detected, refreshing certs and rebuilding SSL factory...");
             CertManager.refreshCerts();
             SSLContext ctx = CertManager.getSSLContext();
             if (ctx == null) {
                 Main.LOGGER.error("[API] CertManager returned null SSLContext after refresh");
                 return;
             }
-            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            tmf.init((KeyStore) null);
-            X509TrustManager tm = (X509TrustManager) tmf.getTrustManagers()[0];
-            httpClient = httpClient.newBuilder().sslSocketFactory(ctx.getSocketFactory(), tm).build();
-            Main.LOGGER.info("[API] SSL client rebuilt successfully with fresh certs");
+            sslFactory = ctx.getSocketFactory();
+            Main.LOGGER.info("[API] SSL factory rebuilt successfully with fresh certs");
         } catch (Exception e) {
-            Main.LOGGER.error("[API] Failed to rebuild SSL client: {}", e.getMessage());
+            Main.LOGGER.error("[API] Failed to rebuild SSL factory: {}", e.getMessage());
         }
     }
 
@@ -224,30 +223,48 @@ public class API {
     }
 
     public static String httpGet(String url) throws IOException {
-        Request request = new Request.Builder()
-                .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " + Main.NAME + "/" + Main.VERSION)
-                .build();
         try {
-            return executeGet(httpClient, request);
+            return executeGet(url);
         } catch (SSLHandshakeException e) {
             Main.LOGGER.warn("[API] SSL handshake failed, refreshing certs and retrying: {}", url);
-            rebuildClientWithFreshCerts();
-            return executeGet(httpClient, request);
+            rebuildSslFactoryWithFreshCerts();
+            return executeGet(url);
         }
     }
 
-    private static String executeGet(OkHttpClient client, Request request) throws IOException {
-        try (Response response = client.newCall(request).execute()) {
-            int code = response.code();
+    private static String executeGet(String url) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            SSLSocketFactory factory = sslFactory;
+            if (factory != null && conn instanceof HttpsURLConnection) {
+                ((HttpsURLConnection) conn).setSSLSocketFactory(factory);
+            }
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(HTTP_TIMEOUT_MS);
+            conn.setReadTimeout(HTTP_TIMEOUT_MS);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " + Main.NAME + "/" + Main.VERSION);
+
+            int code = conn.getResponseCode();
             if (code == 204 || code == 404) return null;
             if (code >= 400) {
-                Main.LOGGER.debug("[API] HTTP {} for {}", code, request.url());
+                Main.LOGGER.debug("[API] HTTP {} for {}", code, conn.getURL());
                 return null;
             }
-            ResponseBody body = response.body();
-            if (body == null) return null;
-            return body.string();
+
+            try (InputStream in = conn.getInputStream()) {
+                if (in == null) return null;
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    out.write(buf, 0, n);
+                }
+                return new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
+        } finally {
+            conn.disconnect();
         }
     }
 

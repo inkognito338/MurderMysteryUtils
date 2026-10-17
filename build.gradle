@@ -113,9 +113,9 @@ dependencies {
     }
 
     // OkHttp 4.12.0 (без CVE, последняя для Java 8)
-    embed('com.squareup.okhttp3:okhttp:4.12.0')
+//    embed('com.squareup.okhttp3:okhttp:4.12.0')
 
-    embed 'org.jetbrains.kotlin:kotlin-stdlib:2.2.21'
+    //embed 'org.jetbrains.kotlin:kotlin-stdlib:2.2.21'
 //    embed 'club.minnced:java-discord-rpc:2.0.2'
 //    compileOnly 'club.minnced:java-discord-rpc:2.0.2'
 //    embed('com.github.JnCrMx:discord-game-sdk4j:v0.5.4')
@@ -126,7 +126,9 @@ dependencies {
     embed("org.luaj:luaj-jse:3.0.1")
 
     // Source: https://mvnrepository.com/artifact/org.java-websocket/Java-WebSocket
-    embed("org.java-websocket:Java-WebSocket:1.6.0")
+    embed('org.java-websocket:Java-WebSocket:1.6.0') {
+        exclude group: 'org.slf4j'
+    }
 //    embed('com.github.pemistahl:lingua:1.2.2')
 
 
@@ -140,35 +142,51 @@ jar {
     from {
         configurations.embed.collect { it.isDirectory() ? it : zipTree(it) }
     } {
+        // META-INF мусор
         exclude 'META-INF/*.RSA'
         exclude 'META-INF/*.SF'
         exclude 'META-INF/*.DSA'
         exclude 'META-INF/maven/**'
-        exclude 'LICENSE.txt'
-        exclude '**/module-info.class'
         exclude 'META-INF/versions/**'
-        exclude '**/*.kotlin_builtins'
-        exclude '**/*.kotlin_metadata'
         exclude 'META-INF/*.kotlin_module'
-        exclude 'DebugProbesKt.bin'
         exclude 'META-INF/LICENSE*'
         exclude 'META-INF/NOTICE*'
         exclude 'META-INF/DEPENDENCIES'
         exclude 'META-INF/proguard/**'
+        exclude 'META-INF/services/javax.annotation.processing.Processor'
+
+        exclude '**/*.kotlin_builtins'
+        exclude '**/*.kotlin_metadata'
+        exclude 'DebugProbesKt.bin'
+
+        exclude 'LICENSE.txt'
+        exclude '**/module-info.class'
         exclude '**/package-info.class'
+
+        // Rhino — только безопасные
         exclude 'org/mozilla/javascript/tools/**'
+        exclude 'org/mozilla/javascript/optimizer/**'
+        exclude 'org/mozilla/javascript/commonjs/**'
+        exclude 'org/mozilla/javascript/serialize/**'
         exclude 'org/mozilla/javascript/xml/impl/xmlbeans/**'
         exclude 'org/mozilla/javascript/resources/Messages_*.properties'
-        exclude 'org/luaj/vm2/luajc/**'      // компиляция Lua в байткод
-        exclude 'org/luaj/vm2/script/**'     // javax.script
-        exclude 'org/luaj/vm2/ast/**'        // парсер для luajc
-        exclude 'org/luaj/vm2/parser/**'     // парсер для luajc
-        exclude 'org/luaj/vm2/lib/jse/**'    // JsePlatform, io/os, luajava
+
+        // LuaJ
+        exclude 'org/luaj/vm2/luajc/**'
+        exclude 'org/luaj/vm2/script/**'
+        exclude 'org/luaj/vm2/ast/**'
+        exclude 'org/luaj/vm2/parser/**'
+        exclude 'org/luaj/vm2/lib/jse/**'
+        exclude 'org/luaj/vm2/server/**'
+
+        // LuaJ корневые классы попавшие в корень jar
+        exclude 'luajc.class'
+        exclude 'luajc$*.class'
+        exclude 'lua.class'
+        exclude 'luac.class'
+
+        // Mixin
         exclude 'org/spongepowered/tools/**'
-        exclude 'META-INF/services/javax.annotation.processing.Processor'
-        exclude 'org/mozilla/javascript/optimizer/**'   // компилятор в байткод
-        exclude 'org/mozilla/javascript/commonjs/**'    // require(), модульная система
-        exclude 'org/mozilla/javascript/serialize/**'   // сериализация скоупов
     }
 
     from(projectDir) {
@@ -212,18 +230,20 @@ publishing {
     }
 }
 
-tasks.register('embedSizes') {
-    doLast {
-        configurations.embed.resolvedConfiguration.resolvedArtifacts
-                .sort { -it.file.length() }
-                .each { println "${(it.file.length() / 1024) as int} KB  ${it.moduleVersion.id}" }
-    }
-}
+tasks.register('embedAudit') {
+    group = 'build'
+    description = 'Shows embed library sizes and which source files import them'
 
-tasks.register('embedUsage') {
     doLast {
-        def text = fileTree('src/main/java').files.collect { it.text }.join('\n')
-        configurations.embed.resolvedConfiguration.resolvedArtifacts.each { a ->
+        def sourceFiles = fileTree('src/main/java').files
+
+        def artifacts = configurations.embed.resolvedConfiguration.resolvedArtifacts
+                .sort { -it.file.length() }
+
+        artifacts.each { a ->
+            def sizeKb = (a.file.length() / 1024) as int
+
+            // Собираем пакеты из jar
             def pkgs = [] as Set
             zipTree(a.file).matching { include '**/*.class'; exclude 'META-INF/**' }.visit { d ->
                 if (!d.isDirectory()) {
@@ -231,8 +251,26 @@ tasks.register('embedUsage') {
                     if (p) pkgs << p
                 }
             }
-            def used = pkgs.any { text.contains(it) }
-            println "${used ? 'IMPORTED    ' : 'NOT IMPORTED'}  ${a.moduleVersion.id}"
+
+            // Ищем файлы, которые импортируют пакеты этой либы
+            def usedIn = sourceFiles.findAll { f ->
+                def text = f.text
+                pkgs.any { text.contains(it) }
+            }.collect { f ->
+                // Красивый относительный путь: src/main/java/...
+                'src/main/java/' + f.absolutePath
+                        .replace(file('src/main/java').absolutePath, '')
+                        .replace('\\', '/')
+                        .replaceAll('^/', '')
+            }
+
+            println "━━━ ${a.moduleVersion.id} [${sizeKb} KB]"
+            if (usedIn) {
+                usedIn.each { println "    ↳ $it" }
+            } else {
+                println "    ↳ (not imported)"
+            }
+            println()
         }
     }
 }

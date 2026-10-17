@@ -1,43 +1,38 @@
 package real.inkognito338.murdermysteryutils.utils;
 
-import okhttp3.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import real.inkognito338.murdermysteryutils.Main;
 
 import javax.net.ssl.*;
 import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.Socket;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.*;
 import java.security.cert.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Project: MurderMysteryUtils
  * Author: inkognito338
  *
- * Трёхуровневый менеджер SSL-сертификатов.
+ * Менеджер SSL-сертификатов и совместимости TLS для старых Java 8 (на стандартной библиотеке).
  *
- * Уровень 1 — JVM cacerts (DigiCert, GlobalSign и др. — есть в Java 8_51, живут до 2031–2038).
- *             Используется по умолчанию. Покрывает Mojang (DigiCert) без каких-либо дополнений.
+ * Доверие:
+ *  Уровень 1  — JVM cacerts.
+ *  Уровень 2  — Бандлированные ISRG Root X1/X2 из JAR.
+ *  Уровень 2b — Сертификаты с диска (только с зашитым SHA-256 отпечатком).
  *
- * Уровень 2 — Бандлированные ISRG Root X1/X2 из JAR-ресурсов.
- *             Нужны для letsencrypt.org и других LE-серверов на Java 8_51.
- *             X1 живёт до 2035, X2 до 2040. Обновляются вместе с модом.
+ * Совместимость (CompatSocketFactory):
+ *  Старые Java 8 шлют SSLv2Hello и/или предлагают устаревший набор — современные серверы
+ *  отвечают handshake_failure. Обёртка включает только TLSv1.2/1.3 и нормальные шифры.
  *
- * Уровень 2b — Сертификаты, скачанные на диск в предыдущих сессиях.
- *              Автоматически подхватываются при загрузке.
- *
- * Уровень 3 — TrustAll-fallback.
- *             Включается ТОЛЬКО если уровни 1+2 не смогли установить соединение
- *             (например, оба корневых CA истекли). Используется для скачивания
- *             свежих сертификатов с официальных серверов Let's Encrypt, после чего
- *             кэш сбрасывается и последующие запросы идут уже через честный SSL.
- *
- * Зеркала для автообновления — только официальные домены letsencrypt.org / lencr.org,
- * оба подписаны DigiCert (есть в Java 8_51). GitHub и сторонние зеркала не используются.
+ * Обновление сертификатов (каждый шаг принимает результат ТОЛЬКО при совпадении пина):
+ *  1) HTTPS с проверкой, 2) HTTP (крайний случай), 3) HTTPS TrustAll.
  */
 public class CertManager {
 
@@ -45,29 +40,22 @@ public class CertManager {
 
     private static final File CERTS_DIR = new File(Main.getConfigDir(), "certs");
 
-    /** Обновлять за 30 дней до истечения. */
     private static final long RENEW_THRESHOLD_MS = 30L * 24 * 60 * 60 * 1000;
-
-    /** Максимальный размер скачиваемого сертификата (защита от мусора). */
     private static final int MAX_CERT_BYTES = 64 * 1024;
+    private static final int TIMEOUT_MS = 10_000;
+    private static final int MAX_REDIRECTS = 5;
 
-    /**
-     * Бандлированные сертификаты — лежат в JAR по пути:
-     * resources/assets/murdermysteryutils/certs/
-     *
-     * ISRG Root X1 — действителен до 04 Jun 2035
-     * ISRG Root X2 — действителен до 17 Sep 2040
-     */
     private static final String[] BUNDLED_CERTS = {
             "isrgrootx1.pem",
             "isrg-root-x2.pem",
     };
 
-    /**
-     * Официальные зеркала для автообновления.
-     * Все домены используют DigiCert → доступны через JVM cacerts даже на Java 8_51.
-     * Порядок важен: первое зеркало — эталон для кросс-проверки.
-     */
+    /** SHA-256 DER-отпечатки (hex, нижний регистр). Проверьте по своим бандленным .pem. */
+    private static final Map<String, String> PINNED_SHA256 = new HashMap<String, String>() {{
+        put("isrgrootx1.pem",   "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6");
+        put("isrg-root-x2.pem", "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470");
+    }};
+
     private static final Map<String, String[]> CERT_MIRRORS = new LinkedHashMap<String, String[]>() {{
         put("isrgrootx1.pem", new String[]{
                 "https://letsencrypt.org/certs/isrgrootx1.pem",
@@ -79,43 +67,133 @@ public class CertManager {
         });
     }};
 
-    /**
-     * TrustAll-клиент — используется ТОЛЬКО как последний fallback
-     * при скачивании сертификатов, когда весь честный SSL недоступен.
-     * Никогда не используется для Mojang-запросов или игровых данных.
-     */
-    private static final OkHttpClient BOOTSTRAP_CLIENT = buildTrustAllClient();
-
     private static volatile SSLContext cachedContext = null;
+    private static volatile SSLSocketFactory cachedCompatFactory = null;
 
-    // ── TrustAll (только для bootstrap) ─────────────────────────────────────
+    // ── TLS-совместимость для старых Java 8 ──────────────────────────────────
 
-    private static OkHttpClient buildTrustAllClient() {
-        X509TrustManager tm = new X509TrustManager() {
-            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-            public void checkClientTrusted(X509Certificate[] c, String a) {}
-            public void checkServerTrusted(X509Certificate[] c, String a) {}
-        };
-        try {
-            SSLContext sc = SSLContext.getInstance("TLS");
-            sc.init(null, new TrustManager[]{tm}, new SecureRandom());
-            return new OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .sslSocketFactory(sc.getSocketFactory(), tm)
-                    .hostnameVerifier((hostname, session) -> true)
-                    .build();
-        } catch (Exception e) {
-            throw new RuntimeException("[CertManager] Failed to build TrustAll client", e);
+    /**
+     * Обёртка над SSLSocketFactory: только TLSv1.2/1.3 (убирает SSLv2Hello и старые протоколы)
+     * и все поддерживаемые не-мусорные шифры, ECDHE+GCM в начале списка.
+     */
+    private static final class CompatSocketFactory extends SSLSocketFactory {
+        private final SSLSocketFactory delegate;
+
+        CompatSocketFactory(SSLSocketFactory delegate) {
+            this.delegate = delegate;
         }
+
+        private Socket configure(Socket s) {
+            if (!(s instanceof SSLSocket)) return s;
+            SSLSocket ssl = (SSLSocket) s;
+            try {
+                List<String> protocols = new ArrayList<>();
+                for (String p : ssl.getSupportedProtocols()) {
+                    if (p.equals("TLSv1.2") || p.equals("TLSv1.3")) protocols.add(p);
+                }
+                if (!protocols.isEmpty()) {
+                    ssl.setEnabledProtocols(protocols.toArray(new String[0]));
+                }
+
+                List<String> ciphers = new ArrayList<>();
+                for (String c : ssl.getSupportedCipherSuites()) {
+                    if (c.contains("_anon_") || c.contains("NULL") || c.contains("EXPORT")
+                            || c.contains("RC4") || c.contains("DES") || c.contains("MD5")) continue;
+                    ciphers.add(c);
+                }
+                ciphers.sort((a, b) -> Integer.compare(score(b), score(a))); // стабильная сортировка
+                if (!ciphers.isEmpty()) {
+                    ssl.setEnabledCipherSuites(ciphers.toArray(new String[0]));
+                }
+            } catch (Exception e) {
+                LOGGER.warn("[CertManager] Compat configure failed: {}", e.getMessage());
+            }
+            return ssl;
+        }
+
+        private static int score(String c) {
+            int s = 0;
+            if (c.contains("ECDHE")) s += 2;
+            if (c.contains("GCM")) s += 1;
+            return s;
+        }
+
+        @Override public String[] getDefaultCipherSuites() { return delegate.getDefaultCipherSuites(); }
+        @Override public String[] getSupportedCipherSuites() { return delegate.getSupportedCipherSuites(); }
+        @Override public Socket createSocket() throws IOException { return configure(delegate.createSocket()); }
+        @Override public Socket createSocket(Socket s, String host, int port, boolean autoClose) throws IOException {
+            return configure(delegate.createSocket(s, host, port, autoClose));
+        }
+        @Override public Socket createSocket(String host, int port) throws IOException {
+            return configure(delegate.createSocket(host, port));
+        }
+        @Override public Socket createSocket(String host, int port, InetAddress lh, int lp) throws IOException {
+            return configure(delegate.createSocket(host, port, lh, lp));
+        }
+        @Override public Socket createSocket(InetAddress host, int port) throws IOException {
+            return configure(delegate.createSocket(host, port));
+        }
+        @Override public Socket createSocket(InetAddress a, int port, InetAddress lh, int lp) throws IOException {
+            return configure(delegate.createSocket(a, port, lh, lp));
+        }
+    }
+
+    /**
+     * Фабрика сокетов с нашими доверенными корнями + режимом совместимости TLS.
+     * Использовать для всех HTTPS-запросов мода. Кэшируется, сбрасывается invalidateCache().
+     */
+    public static synchronized SSLSocketFactory getCompatSocketFactory() {
+        if (cachedCompatFactory == null) {
+            SSLSocketFactory base = null;
+            SSLContext ctx = getSSLContext();
+            if (ctx != null) base = ctx.getSocketFactory();
+            if (base == null) base = (SSLSocketFactory) SSLSocketFactory.getDefault();
+            cachedCompatFactory = new CompatSocketFactory(base);
+        }
+        return cachedCompatFactory;
+    }
+
+    /**
+     * true — проблема доверия к сертификату (имеет смысл обновлять сертификаты).
+     * false — например handshake_failure: сервер и клиент не договорились о параметрах TLS.
+     */
+    public static boolean isTrustProblem(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof CertificateException
+                    || c instanceof CertPathValidatorException
+                    || c instanceof CertPathBuilderException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ── TrustAll (только для bootstrap, результат всегда проверяется пином) ──
+
+    private static final HostnameVerifier ALLOW_ALL_HOSTS = (hostname, session) -> true;
+    private static SSLSocketFactory bootstrapFactory = null;
+
+    private static synchronized SSLSocketFactory getBootstrapFactory() {
+        if (bootstrapFactory == null) {
+            X509TrustManager tm = new X509TrustManager() {
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                public void checkClientTrusted(X509Certificate[] c, String a) {}
+                public void checkServerTrusted(X509Certificate[] c, String a) {}
+            };
+            try {
+                SSLContext sc = SSLContext.getInstance("TLS");
+                sc.init(null, new TrustManager[]{tm}, new SecureRandom());
+                bootstrapFactory = new CompatSocketFactory(sc.getSocketFactory());
+            } catch (Exception e) {
+                throw new RuntimeException("[CertManager] Failed to build TrustAll factory", e);
+            }
+        }
+        return bootstrapFactory;
     }
 
     // ── Публичный API ────────────────────────────────────────────────────────
 
-    /**
-     * Возвращает SSLContext с тремя уровнями доверия.
-     * Безопасно вызывать из любого потока; результат кэшируется.
-     */
+    /** Возвращает SSLContext с тремя уровнями доверия. Результат кэшируется. */
     public static synchronized SSLContext getSSLContext() {
         if (cachedContext != null) return cachedContext;
         try {
@@ -126,36 +204,27 @@ public class CertManager {
         return cachedContext;
     }
 
-    /**
-     * Сбросить кэш SSLContext.
-     * После вызова следующий getSSLContext() пересоберёт контекст
-     * с учётом новых файлов на диске.
-     */
+    /** Сбросить кэши: следующие getSSLContext()/getCompatSocketFactory() пересоберутся. */
     public static synchronized void invalidateCache() {
         cachedContext = null;
+        cachedCompatFactory = null;
     }
 
     /**
-     * Проверить и при необходимости обновить сертификаты на диске.
-     * Вызывать в фоновом потоке.
-     * После завершения автоматически сбрасывает кэш SSLContext.
-     *
-     * Логика:
-     * 1. Пробуем скачать через честный SSLContext (уровни 1+2).
-     * 2. Если несколько зеркал ответили — сравниваем байты (кросс-проверка на MITM).
-     * 3. Только если все честные каналы провалились — TrustAll fallback.
+     * Проверить и при необходимости обновить сертификаты на диске. Вызывать в фоновом потоке.
+     * Порядок: HTTPS (с проверкой) → HTTP (крайний случай) → HTTPS TrustAll.
+     * На каждом шаге сертификат сохраняется ТОЛЬКО если его SHA-256 совпал с зашитым пином.
      */
     public static void refreshCerts() {
         if (!CERTS_DIR.exists() && !CERTS_DIR.mkdirs()) {
             LOGGER.warn("[CertManager] Failed to create certs dir: {}", CERTS_DIR);
         }
 
-        // Строим клиент с текущими уровнями 1+2
-        OkHttpClient verifiedClient = null;
+        SSLSocketFactory verifiedFactory = null;
         try {
-            verifiedClient = buildVerifiedClient();
+            verifiedFactory = new CompatSocketFactory(buildSSLContext().getSocketFactory());
         } catch (Exception e) {
-            LOGGER.warn("[CertManager] Could not build verified client: {}", e.getMessage());
+            LOGGER.warn("[CertManager] Could not build verified SSL factory: {}", e.getMessage());
         }
 
         for (Map.Entry<String, String[]> entry : CERT_MIRRORS.entrySet()) {
@@ -170,28 +239,21 @@ public class CertManager {
 
             boolean saved = false;
 
-            // Попытка 1: честный SSL + кросс-проверка зеркал
-            if (verifiedClient != null) {
-                saved = tryDownloadVerified(verifiedClient, urls, dest, fileName);
+            // 1) HTTPS с нормальной проверкой
+            if (verifiedFactory != null) {
+                saved = downloadPinned(verifiedFactory, null, false, urls, fileName, dest, "verified HTTPS");
             }
 
-            // Попытка 2: TrustAll fallback (только если честный путь недоступен)
+            // 2) HTTP — крайний случай; безопасно благодаря пину
             if (!saved) {
-                LOGGER.warn("[CertManager] All verified downloads failed for {}, " +
-                        "falling back to TrustAll (unverified connection!)", fileName);
-                for (String url : urls) {
-                    try {
-                        byte[] data = fetchBytes(BOOTSTRAP_CLIENT, url);
-                        if (data != null && isValidX509(data)) {
-                            Files.write(dest.toPath(), data);
-                            LOGGER.warn("[CertManager] Saved {} via TrustAll fallback", fileName);
-                            saved = true;
-                            break;
-                        }
-                    } catch (Exception e) {
-                        LOGGER.warn("[CertManager] TrustAll fallback failed for {}: {}", url, e.getMessage());
-                    }
-                }
+                LOGGER.warn("[CertManager] Verified HTTPS failed for {}, trying plain HTTP (pin-checked)", fileName);
+                saved = downloadPinned(null, null, true, toHttpUrls(urls), fileName, dest, "plain HTTP");
+            }
+
+            // 3) HTTPS TrustAll — последний шанс; тоже только с пином
+            if (!saved) {
+                LOGGER.warn("[CertManager] HTTP failed for {}, falling back to TrustAll HTTPS (pin-checked)", fileName);
+                saved = downloadPinned(getBootstrapFactory(), ALLOW_ALL_HOSTS, false, urls, fileName, dest, "TrustAll");
             }
 
             if (!saved) {
@@ -199,7 +261,6 @@ public class CertManager {
             }
         }
 
-        // Сбрасываем кэш — следующий getSSLContext() подхватит новые файлы с диска
         invalidateCache();
         LOGGER.info("[CertManager] Cert refresh complete");
     }
@@ -211,15 +272,9 @@ public class CertManager {
         ks.load(null, null);
 
         int count = 0;
-
-        // Уровень 1: сертификаты из JVM cacerts
-        count += loadJvmCerts(ks);
-
-        // Уровень 2: бандлированные сертификаты из JAR
-        count += loadBundledCerts(ks);
-
-        // Уровень 2b: сертификаты, скачанные на диск ранее
-        count += loadDiskCerts(ks);
+        count += loadJvmCerts(ks);       // Уровень 1
+        count += loadBundledCerts(ks);   // Уровень 2
+        count += loadDiskCerts(ks);      // Уровень 2b
 
         LOGGER.info("[CertManager] SSLContext built with {} trusted certs total", count);
 
@@ -227,7 +282,7 @@ public class CertManager {
                 TrustManagerFactory.getDefaultAlgorithm());
         tmf.init(ks);
 
-        SSLContext ctx = SSLContext.getInstance("TLSv1.2");
+        SSLContext ctx = SSLContext.getInstance("TLS");
         ctx.init(null, tmf.getTrustManagers(), new SecureRandom());
         return ctx;
     }
@@ -269,13 +324,9 @@ public class CertManager {
         int count = 0;
         for (String name : BUNDLED_CERTS) {
             X509Certificate cert = null;
-
-            // В JAR файлы лежат по пути: assets/murdermysteryutils/certs/isrgrootx1.pem
-            // Для ClassLoader путь не должен начинаться с /
             String resourcePath = "assets/murdermysteryutils/certs/" + name;
 
             try {
-                // Пробуем через ClassLoader (работает в Forge)
                 try (InputStream is = CertManager.class.getClassLoader().getResourceAsStream(resourcePath)) {
                     if (is != null) {
                         LOGGER.debug("[CertManager] Found cert via ClassLoader: {}", resourcePath);
@@ -283,7 +334,6 @@ public class CertManager {
                     }
                 }
 
-                // Если не нашли, пробуем через Class.getResourceAsStream
                 if (cert == null) {
                     try (InputStream is = CertManager.class.getResourceAsStream("/" + resourcePath)) {
                         if (is != null) {
@@ -293,7 +343,6 @@ public class CertManager {
                     }
                 }
 
-                // Последняя попытка - ищем в корне
                 if (cert == null) {
                     try (InputStream is = CertManager.class.getClassLoader().getResourceAsStream(name)) {
                         if (is != null) {
@@ -302,7 +351,6 @@ public class CertManager {
                         }
                     }
                 }
-
             } catch (Exception e) {
                 LOGGER.warn("[CertManager] Failed to load bundled cert {}: {}", name, e.getMessage());
             }
@@ -332,6 +380,7 @@ public class CertManager {
         return count;
     }
 
+    /** С диска принимаются только сертификаты с зашитым отпечатком (защита от подмены файлов). */
     private static int loadDiskCerts(KeyStore ks) {
         if (!CERTS_DIR.exists()) return 0;
 
@@ -346,6 +395,13 @@ public class CertManager {
         for (File file : files) {
             try (InputStream is = Files.newInputStream(file.toPath())) {
                 X509Certificate cert = (X509Certificate) cf.generateCertificate(is);
+
+                String fp = sha256Hex(cert.getEncoded());
+                if (!PINNED_SHA256.containsValue(fp)) {
+                    LOGGER.warn("[CertManager] Disk cert not pinned, ignored: {}", file.getName());
+                    continue;
+                }
+
                 try {
                     cert.checkValidity();
                     ks.setCertificateEntry("disk_" + file.getName() + "_" + count, cert);
@@ -361,93 +417,102 @@ public class CertManager {
         return count;
     }
 
-    // ── Скачивание с кросс-проверкой ────────────────────────────────────────
+    // ── Скачивание с проверкой пина ──────────────────────────────────────────
 
     /**
-     * Скачивает сертификат с нескольких официальных зеркал и сравнивает байты.
-     * Если хотя бы два зеркала ответили — они обязаны совпасть побайтово.
-     * При расхождении сохранение блокируется и выводится предупреждение о возможном MITM.
+     * Пробует URL по очереди; сохраняет первый сертификат, чей SHA-256 совпал с пином.
+     * Не совпал (подмена/мусор) — пробуем следующий URL, на диск ничего не пишем.
      */
-    private static boolean tryDownloadVerified(OkHttpClient client, String[] urls,
-                                               File dest, String logName) {
-        List<byte[]> results = new ArrayList<>();
-
+    private static boolean downloadPinned(SSLSocketFactory factory, HostnameVerifier verifier,
+                                          boolean allowHttp, String[] urls,
+                                          String fileName, File dest, String label) {
         for (String url : urls) {
             try {
-                byte[] data = fetchBytes(client, url);
-                if (data != null) results.add(data);
-            } catch (SSLHandshakeException e) {
-                LOGGER.debug("[CertManager] SSL handshake failed for {}: {}", url, e.getMessage());
+                byte[] der = toDer(fetchBytes(factory, verifier, allowHttp, url));
+                if (der == null) {
+                    LOGGER.debug("[CertManager] Not a valid X.509 from {} ({})", url, label);
+                    continue;
+                }
+                if (!matchesPin(fileName, der)) {
+                    LOGGER.error("[CertManager] PIN MISMATCH for {} from {} ({}) — possible MITM, rejected",
+                            fileName, url, label);
+                    continue;
+                }
+                Files.write(dest.toPath(), toPem(der));
+                LOGGER.info("[CertManager] Updated cert {} via {} ({})", fileName, label, url);
+                return true;
             } catch (Exception e) {
-                LOGGER.debug("[CertManager] Fetch failed for {}: {}", url, e.getMessage());
+                LOGGER.debug("[CertManager] {} failed for {}: {}", label, url, e.getMessage());
             }
         }
+        return false;
+    }
 
-        if (results.isEmpty()) return false;
-
-        // Кросс-проверка: все скачанные копии должны совпадать
-        byte[] reference = results.get(0);
-        for (int i = 1; i < results.size(); i++) {
-            if (!Arrays.equals(reference, results.get(i))) {
-                LOGGER.error("[CertManager] MIRROR MISMATCH for {}! " +
-                        "Different bytes from different mirrors — possible MITM attack! " +
-                        "Aborting save.", logName);
-                return false;
-            }
+    private static String[] toHttpUrls(String[] urls) {
+        String[] out = new String[urls.length];
+        for (int i = 0; i < urls.length; i++) {
+            out[i] = urls[i].startsWith("https://") ? "http://" + urls[i].substring(8) : urls[i];
         }
-        if (results.size() > 1) {
-            LOGGER.debug("[CertManager] Cross-check passed ({} mirrors agree) for {}",
-                    results.size(), logName);
-        }
-
-        // Финальная валидация: это должен быть корректный X.509
-        if (!isValidX509(reference)) {
-            LOGGER.error("[CertManager] Downloaded data is not a valid X.509 cert: {}", logName);
-            return false;
-        }
-
-        try {
-            Files.write(dest.toPath(), reference);
-            LOGGER.info("[CertManager] Updated cert: {}", logName);
-            return true;
-        } catch (Exception e) {
-            LOGGER.warn("[CertManager] Failed to save cert {}: {}", logName, e.getMessage());
-            return false;
-        }
+        return out;
     }
 
     // ── HTTP ─────────────────────────────────────────────────────────────────
 
-    private static OkHttpClient buildVerifiedClient() throws Exception {
-        SSLContext ctx = buildSSLContext();
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(
-                TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init((KeyStore) null);
-        X509TrustManager tm = (X509TrustManager) tmf.getTrustManagers()[0];
-        return new OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(10, TimeUnit.SECONDS)
-                .sslSocketFactory(ctx.getSocketFactory(), tm)
-                .build();
-    }
+    /**
+     * GET. factory/verifier применяются только для HTTPS. Редиректы ведутся вручную;
+     * переход на http разрешён только при allowHttp. Размер ответа ограничен MAX_CERT_BYTES.
+     */
+    private static byte[] fetchBytes(SSLSocketFactory factory, HostnameVerifier verifier,
+                                     boolean allowHttp, String url) throws IOException {
+        String current = url;
+        for (int hops = 0; hops <= MAX_REDIRECTS; hops++) {
+            URL u = new URL(current);
+            boolean https = "https".equals(u.getProtocol());
+            if (!https && !(allowHttp && "http".equals(u.getProtocol()))) {
+                throw new IOException("Refusing URL (protocol not allowed): " + current);
+            }
 
-    private static byte[] fetchBytes(OkHttpClient client, String url) throws IOException {
-        Request request = new Request.Builder()
-                .url(url)
-                .header("User-Agent", "MurderMysteryUtils/" + Main.VERSION)
-                .build();
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new IOException("HTTP " + response.code() + " for " + url);
+            HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+            try {
+                if (https && conn instanceof HttpsURLConnection) {
+                    HttpsURLConnection hc = (HttpsURLConnection) conn;
+                    if (factory != null) hc.setSSLSocketFactory(factory);
+                    if (verifier != null) hc.setHostnameVerifier(verifier);
+                }
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(TIMEOUT_MS);
+                conn.setReadTimeout(TIMEOUT_MS);
+                conn.setInstanceFollowRedirects(false);
+                conn.setRequestProperty("User-Agent", "MurderMysteryUtils/" + Main.VERSION);
+
+                int code = conn.getResponseCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null) throw new IOException("Redirect without Location for " + current);
+                    current = new URL(u, location).toString();
+                    continue;
+                }
+                if (code < 200 || code >= 300) {
+                    throw new IOException("HTTP " + code + " for " + current);
+                }
+
+                try (InputStream in = conn.getInputStream()) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        out.write(buf, 0, n);
+                        if (out.size() > MAX_CERT_BYTES) {
+                            throw new IOException("Response too large for " + current);
+                        }
+                    }
+                    return out.toByteArray();
+                }
+            } finally {
+                conn.disconnect();
             }
-            ResponseBody body = response.body();
-            if (body == null) throw new IOException("Empty response body for " + url);
-            byte[] bytes = body.bytes();
-            if (bytes.length > MAX_CERT_BYTES) {
-                throw new IOException("Response too large (" + bytes.length + " bytes) for " + url);
-            }
-            return bytes;
         }
+        throw new IOException("Too many redirects for " + url);
     }
 
     // ── Утилиты ──────────────────────────────────────────────────────────────
@@ -469,14 +534,38 @@ public class CertManager {
         }
     }
 
-    private static boolean isValidX509(byte[] data) {
+    private static boolean matchesPin(String fileName, byte[] der) {
+        String expected = PINNED_SHA256.get(fileName);
+        if (expected == null) return false;
+        return expected.equalsIgnoreCase(sha256Hex(der));
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            byte[] h = MessageDigest.getInstance("SHA-256").digest(data);
+            StringBuilder sb = new StringBuilder(h.length * 2);
+            for (byte b : h) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** PEM или DER на входе, DER на выходе. null, если это не валидный X.509. */
+    private static byte[] toDer(byte[] data) {
+        if (data == null) return null;
         try {
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            cf.generateCertificate(new ByteArrayInputStream(data));
-            return true;
+            return cf.generateCertificate(new ByteArrayInputStream(data)).getEncoded();
         } catch (Exception e) {
-            return false;
+            return null;
         }
+    }
+
+    private static byte[] toPem(byte[] der) {
+        String b64 = Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(der);
+        return ("-----BEGIN CERTIFICATE-----\n" + b64 + "\n-----END CERTIFICATE-----\n")
+                .getBytes(StandardCharsets.US_ASCII);
     }
 
     private static String sanitizeAlias(String raw) {

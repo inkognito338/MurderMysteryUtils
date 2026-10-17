@@ -6,21 +6,24 @@ import net.minecraft.client.Minecraft;
 import net.minecraftforge.common.ForgeVersion;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.ModContainer;
-import okhttp3.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import real.inkognito338.murdermysteryutils.Main;
 import real.inkognito338.murdermysteryutils.utils.CertManager;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.KeyStore;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Project: MurderMysteryUtils
@@ -39,7 +42,8 @@ public class MixpanelAnalytics {
     private static final String MIXPANEL_ENDPOINT = "https://api-eu.mixpanel.com/track" + (DEBUG ? "?verbose=1" : "");
 
     private static final String USER_AGENT = "MurderMysteryUtils/" + Main.VERSION + " (Minecraft)";
-    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+
+    private static final int HTTP_TIMEOUT_MS = 5_000;
 
     private static void debug(String msg, Object... args) {
         if (DEBUG) LOGGER.info(msg, args);
@@ -111,47 +115,66 @@ public class MixpanelAnalytics {
         }, "Mixpanel-Thread").start();
     }
 
+    /**
+     * POST JSON. Возвращает тело ответа независимо от кода (для 4xx/5xx читается errorStream).
+     * Сетевые ошибки логируются и пробрасываются наружу.
+     */
     private static String post(String url, String body) throws Exception {
-        Request request = new Request.Builder()
-                .url(url)
-                .header("User-Agent",USER_AGENT)
-                .post(RequestBody.create(JSON, body))
-                .build();
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            SSLSocketFactory factory = buildSslFactory();
+            if (factory != null && conn instanceof HttpsURLConnection) {
+                ((HttpsURLConnection) conn).setSSLSocketFactory(factory);
+            }
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(HTTP_TIMEOUT_MS);
+            conn.setReadTimeout(HTTP_TIMEOUT_MS);
+            conn.setInstanceFollowRedirects(true);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("User-Agent", USER_AGENT);
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
 
-        try (Response response = buildHttpClient(true).newCall(request).execute()) {
-            String text = response.body() != null ? response.body().string() : "";
-            debug("[Mixpanel] HTTPS ответ код: {}", response.code());
-            return text;
-        } catch (Throwable t) {
-            LOGGER.warn("[Mixpanel] Ошибка отправки запроса: {}", t.getMessage());
-            throw t;
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(payload);
+            }
+
+            int code = conn.getResponseCode();
+            debug("[Mixpanel] HTTPS ответ код: {}", code);
+
+            InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            if (in == null) return "";
+            try (InputStream stream = in) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = stream.read(buf)) != -1) {
+                    out.write(buf, 0, n);
+                }
+                return new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
+        } catch (IOException e) {
+            LOGGER.warn("[Mixpanel] Ошибка отправки запроса: {}", e.getMessage());
+            throw e;
+        } finally {
+            conn.disconnect();
         }
     }
 
-    private static OkHttpClient buildHttpClient(boolean useHttps) {
-        if (useHttps) {
-            try {
-                SSLContext ctx = CertManager.getSSLContext();
-                if (ctx != null) {
-                    TrustManagerFactory tmf = TrustManagerFactory.getInstance(
-                            TrustManagerFactory.getDefaultAlgorithm());
-                    tmf.init((KeyStore) null);
-                    X509TrustManager tm = (X509TrustManager) tmf.getTrustManagers()[0];
-                    return new OkHttpClient.Builder()
-                            .connectTimeout(5, TimeUnit.SECONDS)
-                            .readTimeout(5, TimeUnit.SECONDS)
-                            .sslSocketFactory(ctx.getSocketFactory(), tm)
-                            .build();
-                }
-            } catch (Throwable t) {
-                LOGGER.warn("[Mixpanel] Не удалось создать SSL-клиент с CertManager: {}", t.getMessage());
+    /**
+     * SSLSocketFactory из CertManager или null (дефолтный JVM SSL).
+     */
+    private static SSLSocketFactory buildSslFactory() {
+        try {
+            SSLContext ctx = CertManager.getSSLContext();
+            if (ctx != null) {
+                return ctx.getSocketFactory();
             }
+        } catch (Throwable t) {
+            LOGGER.warn("[Mixpanel] Не удалось создать SSL-фабрику с CertManager: {}", t.getMessage());
         }
-
-        return new OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.SECONDS)
-                .build();
+        return null;
     }
 
     /**

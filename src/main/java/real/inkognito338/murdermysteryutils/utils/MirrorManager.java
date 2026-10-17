@@ -1,20 +1,20 @@
 package real.inkognito338.murdermysteryutils.utils;
 
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
 import real.inkognito338.murdermysteryutils.Main;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
-import javax.net.ssl.SSLHandshakeException;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.SSLSocketFactory;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
+import java.net.URL;
 import java.net.UnknownHostException;
-import java.security.KeyStore;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -27,6 +27,9 @@ import java.util.concurrent.TimeUnit;
  * По умолчанию используется только GitHub. Никакого автоматического перебора зеркал -
  * если основной источник недоступен, пользователю нужно явно выбрать другой командой .mirror.
  * Доступные зеркала: GitHub, Codeberg, GitFlic, GitLab, Statically (CDN), jsDelivr (CDN).
+ *
+ * Проба доступности: обычный HTTPS -> HTTPS в режиме совместимости TLS (старые Java 8) ->
+ * http:// как крайний случай (результат помечается insecure и в автовыбор не попадает).
  */
 public class MirrorManager {
 
@@ -71,31 +74,28 @@ public class MirrorManager {
 
     private static volatile Mirror current = null;
 
-    // Отдельный клиент с коротким таймаутом специально для проверки доступности -
-    // не должен влиять на основной httpClient в API и не должен долго висеть в команде.
-    // Инициализируется дефолтным JVM SSL; при SSLHandshakeException пересобирается
-    // через CertManager (см. rebuildProbeClientWithFreshCerts), как в CmdGetSkin.
-    private static volatile OkHttpClient PROBE_CLIENT = new OkHttpClient.Builder()
-            .connectTimeout(2, TimeUnit.SECONDS)
-            .readTimeout(2, TimeUnit.SECONDS)
-            .build();
+    /** Короткий таймаут специально для проверки доступности - команда не должна долго висеть. */
+    private static final int PROBE_TIMEOUT_MS = 2_000;
 
-    private static synchronized void rebuildProbeClientWithFreshCerts() {
+    /**
+     * null = дефолтный JVM SSL. После обновления сертификатов подменяется
+     * compat-фабрикой из CertManager (с нашими корнями и TLS 1.2+).
+     */
+    private static volatile SSLSocketFactory probeSslFactory = null;
+
+    private static synchronized void rebuildProbeSslFactoryWithFreshCerts() {
         try {
-            Main.LOGGER.info("[MirrorManager] SSL error detected, refreshing certs and rebuilding probe client...");
+            Main.LOGGER.info("[MirrorManager] Untrusted certificate, refreshing certs and rebuilding probe SSL factory...");
             CertManager.refreshCerts();
             SSLContext ctx = CertManager.getSSLContext();
             if (ctx == null) {
                 Main.LOGGER.error("[MirrorManager] CertManager returned null SSLContext after refresh");
                 return;
             }
-            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            tmf.init((KeyStore) null);
-            X509TrustManager tm = (X509TrustManager) tmf.getTrustManagers()[0];
-            PROBE_CLIENT = PROBE_CLIENT.newBuilder().sslSocketFactory(ctx.getSocketFactory(), tm).build();
-            Main.LOGGER.info("[MirrorManager] Probe client rebuilt successfully with fresh certs");
+            probeSslFactory = CertManager.getCompatSocketFactory();
+            Main.LOGGER.info("[MirrorManager] Probe SSL factory rebuilt successfully with fresh certs");
         } catch (Exception e) {
-            Main.LOGGER.error("[MirrorManager] Failed to rebuild probe client: {}", e.getMessage());
+            Main.LOGGER.error("[MirrorManager] Failed to rebuild probe SSL factory: {}", e.getMessage());
         }
     }
 
@@ -107,7 +107,7 @@ public class MirrorManager {
     public static final String AUTONEXT_SCRIPT_PATH = "API/AutoNext.lua";
     public static final String CHECK_UPDATE_SCRIPT_PATH = "API/check_update.lua";
     public static final String CHATIGNORE_SCRIPT_PATH = "API/chatignore.lua";
-    public static final String TAGS_SCRIPT_PATH = "API/tags.lua";   // <-- добавить
+    public static final String TAGS_SCRIPT_PATH = "API/tags.lua";
 
     private MirrorManager() {}
 
@@ -163,6 +163,11 @@ public class MirrorManager {
         return mirror.baseUrl + "/" + relativePath;
     }
 
+    /** https://... -> http://... (для крайнего случая). Остальные URL возвращаются как есть. */
+    public static String downgradeToHttp(String url) {
+        return url.startsWith("https://") ? "http://" + url.substring(8) : url;
+    }
+
     /**
      * Результат проверки доступности зеркала.
      */
@@ -170,135 +175,215 @@ public class MirrorManager {
         public final Mirror mirror;
         public final boolean reachable;
         public final long latencyMs;
-        /** Краткая машинно-понятная причина: OK, TIMEOUT, DNS_ERROR, SSL_ERROR, HTTP_4XX, HTTP_5XX, EMPTY_BODY, IO_ERROR */
+        /** OK, OK_HTTP, TIMEOUT, DNS_ERROR, SSL_ERROR, HTTP_4XX, HTTP_5XX, EMPTY_BODY, IO_ERROR */
         public final String reasonCode;
-        /** Человекочитаемая причина для вывода в чат/лог, например "HTTP 404" или "SSLHandshakeException: ..." */
+        /** Полная причина для лога. */
         public final String reasonDetail;
+        /** Краткая причина для вывода в чат. */
+        public final String shortDetail;
+        /** true — зеркало ответило только по голому http:// (нет шифрования и проверки подлинности). */
+        public final boolean insecure;
 
-        ProbeResult(Mirror mirror, boolean reachable, long latencyMs, String reasonCode, String reasonDetail) {
+        ProbeResult(Mirror mirror, boolean reachable, long latencyMs,
+                    String reasonCode, String reasonDetail, String shortDetail, boolean insecure) {
             this.mirror = mirror;
             this.reachable = reachable;
             this.latencyMs = latencyMs;
             this.reasonCode = reasonCode;
             this.reasonDetail = reasonDetail;
+            this.shortDetail = shortDetail;
+            this.insecure = insecure;
+        }
+
+        /** Для случаев где краткий и полный detail совпадают (HTTP-ошибки, пустое тело). */
+        ProbeResult(Mirror mirror, boolean reachable, long latencyMs,
+                    String reasonCode, String reasonDetail, boolean insecure) {
+            this(mirror, reachable, latencyMs, reasonCode, reasonDetail, reasonDetail, insecure);
+        }
+
+        ProbeResult(Mirror mirror, boolean reachable, long latencyMs, String reasonCode, String reasonDetail) {
+            this(mirror, reachable, latencyMs, reasonCode, reasonDetail, reasonDetail, false);
         }
     }
 
     /**
-     * Синхронно проверяет доступность одного зеркала лёгким GET-запросом
-     * небольшого файла (check_update.lua) с коротким таймаутом. Блокирующий
-     * вызов - использовать только из фонового потока, не из чат/тик-потока.
+     * Синхронно проверяет доступность одного зеркала лёгким GET-запросом (check_update.lua)
+     * с коротким таймаутом. Блокирующий вызов - только из фонового потока.
      *
-     * В отличие от простого true/false, сохраняет причину сбоя (DNS, таймаут,
-     * SSL, HTTP-код и т.д.) и всегда логирует её в Main.LOGGER, чтобы в логах
-     * было видно, почему конкретное зеркало не отвечает.
+     * Шаги при SSL-ошибке:
+     *  1) если проблема доверия - обновляем сертификаты и повторяем;
+     *  2) иначе (handshake_failure и т.п.) - повтор через CertManager.getCompatSocketFactory();
+     *  3) крайний случай - http://. Успех помечается insecure.
      */
     public static ProbeResult probe(Mirror mirror) {
         String url = resolveUrl(mirror, CHECK_UPDATE_SCRIPT_PATH);
         long start = System.currentTimeMillis();
+        SSLException lastSsl;
 
+        // Шаг 1: обычная попытка
         try {
-            return executeProbe(PROBE_CLIENT, mirror, url, start);
-        } catch (SSLHandshakeException e) {
-            Main.LOGGER.warn("[MirrorManager] SSL handshake failed, refreshing certs and retrying: {}", url);
-            rebuildProbeClientWithFreshCerts();
-            try {
-                return executeProbe(PROBE_CLIENT, mirror, url, start);
-            } catch (Exception retryEx) {
-                return probeFailure(mirror, url, start, retryEx);
+            return executeProbe(mirror, url, start, probeSslFactory, false);
+        } catch (SSLException e) {
+            lastSsl = e;
+            if (CertManager.isTrustProblem(e)) {
+                Main.LOGGER.warn("[MirrorManager] Trust problem for {}: {}", url, e.getMessage());
+                rebuildProbeSslFactoryWithFreshCerts();
+            } else {
+                Main.LOGGER.warn("[MirrorManager] TLS negotiation failed for {} ({}), retrying in compat mode",
+                        url, e.getMessage());
             }
         } catch (Exception e) {
             return probeFailure(mirror, url, start, e);
         }
+
+        // Шаг 2: compat-режим (TLS 1.2+, без SSLv2Hello, расширенный набор шифров)
+        try {
+            return executeProbe(mirror, url, start, CertManager.getCompatSocketFactory(), false);
+        } catch (SSLException e) {
+            lastSsl = e;
+        } catch (Exception e) {
+            return probeFailure(mirror, url, start, e);
+        }
+
+        // Шаг 3: http:// как крайний случай
+        if (url.startsWith("https://")) {
+            String httpUrl = downgradeToHttp(url);
+            try {
+                ProbeResult r = executeProbe(mirror, httpUrl, start, null, true);
+                if (r.reachable) {
+                    Main.LOGGER.warn("[MirrorManager] {} reachable ONLY via plain HTTP (insecure)", mirror.id);
+                    return r;
+                }
+            } catch (Exception e) {
+                Main.LOGGER.debug("[MirrorManager] HTTP fallback failed for {}: {}", httpUrl, e.getMessage());
+            }
+        }
+
+        return probeFailure(mirror, url, start, lastSsl);
     }
 
-    private static ProbeResult executeProbe(OkHttpClient client, Mirror mirror, String url, long start) throws IOException {
-        Request request = new Request.Builder()
-                .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MurderMysteryUtils/" + Main.VERSION)
-                .build();
+    private static ProbeResult executeProbe(Mirror mirror, String url, long start,
+                                            SSLSocketFactory factory, boolean viaHttp) throws IOException {
+        String currentUrl = url;
+        for (int hops = 0; hops <= 3; hops++) {
+            HttpURLConnection conn = (HttpURLConnection) new URL(currentUrl).openConnection();
+            try {
+                if (factory != null && conn instanceof HttpsURLConnection) {
+                    ((HttpsURLConnection) conn).setSSLSocketFactory(factory);
+                }
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(PROBE_TIMEOUT_MS);
+                conn.setReadTimeout(PROBE_TIMEOUT_MS);
+                conn.setInstanceFollowRedirects(false);
+                conn.setRequestProperty("User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MurderMysteryUtils/" + Main.VERSION);
 
-        try (Response response = client.newCall(request).execute()) {
-            long latency = System.currentTimeMillis() - start;
-            int code = response.code();
-            String actualUrl = response.request().url().toString();
+                int code = conn.getResponseCode();
+                long latency = System.currentTimeMillis() - start;
 
-            if (!response.isSuccessful()) {
-                String reasonCode = code >= 500 ? "HTTP_5XX" : "HTTP_4XX";
-                String detail = "HTTP " + code + " for " + actualUrl;
-                Main.LOGGER.warn("[MirrorManager] Probe failed for {}: {} ({} ms)", mirror.id, detail, latency);
-                return new ProbeResult(mirror, false, latency, reasonCode, detail);
+                // Редирект — следуем вручную с той же factory
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null) {
+                        return new ProbeResult(mirror, false, latency, "IO_ERROR",
+                                "Redirect without Location from " + currentUrl, "нет Location в редиректе", viaHttp);
+                    }
+                    currentUrl = new java.net.URL(new java.net.URL(currentUrl), location).toString();
+                    if (currentUrl.startsWith("https://")) viaHttp = false;
+                    continue;
+                }
+
+                if (code < 200 || code >= 300) {
+                    String reasonCode = code >= 500 ? "HTTP_5XX" : "HTTP_4XX";
+                    String detail = "HTTP " + code + " for " + currentUrl;
+                    Main.LOGGER.warn("[MirrorManager] Probe failed for {}: {} ({} ms)", mirror.id, detail, latency);
+                    return new ProbeResult(mirror, false, latency, reasonCode, detail, "HTTP " + code, viaHttp);
+                }
+
+                try (InputStream in = conn.getInputStream()) {
+                    if (in == null || in.read() == -1) {
+                        String detail = "empty response body from " + currentUrl;
+                        Main.LOGGER.warn("[MirrorManager] Probe failed for {}: {} ({} ms)", mirror.id, detail, latency);
+                        return new ProbeResult(mirror, false, latency, "EMPTY_BODY", detail, "пустой ответ", viaHttp);
+                    }
+                }
+
+                if (viaHttp) {
+                    return new ProbeResult(mirror, true, latency, "OK_HTTP",
+                            "HTTP " + code + " (без шифрования!)", "HTTP " + code + " (без шифрования!)", true);
+                }
+                Main.LOGGER.info("[MirrorManager] Probe OK for {} ({} ms)", mirror.id, latency);
+                return new ProbeResult(mirror, true, latency, "OK", "HTTP " + code, "HTTP " + code, false);
+            } finally {
+                conn.disconnect();
             }
-
-            if (response.body() == null) {
-                String detail = "empty response body from " + actualUrl;
-                Main.LOGGER.warn("[MirrorManager] Probe failed for {}: {} ({} ms)", mirror.id, detail, latency);
-                return new ProbeResult(mirror, false, latency, "EMPTY_BODY", detail);
-            }
-
-            Main.LOGGER.info("[MirrorManager] Probe OK for {} ({} ms)", mirror.id, latency);
-            return new ProbeResult(mirror, true, latency, "OK", "HTTP " + code);
         }
+        throw new IOException("Too many redirects for " + url);
     }
 
     private static ProbeResult probeFailure(Mirror mirror, String url, long start, Exception e) {
         long latency = System.currentTimeMillis() - start;
         String reasonCode;
-        String detail;
+        String detail;      // полный текст → только в лог
+        String shortDetail; // краткий текст → в чат
 
         if (e instanceof UnknownHostException) {
             reasonCode = "DNS_ERROR";
             detail = "DNS resolution failed for " + url + ": " + e.getMessage();
+            shortDetail = "нет DNS";
         } else if (e instanceof SocketTimeoutException) {
             reasonCode = "TIMEOUT";
             detail = "connection/read timeout for " + url;
+            shortDetail = "таймаут";
         } else if (e instanceof SSLException) {
             reasonCode = "SSL_ERROR";
-            detail = "SSL error for " + url + ": " + e.getClass().getSimpleName() + " - " + e.getMessage();
+            detail = "SSL error for " + url + ": " + e.getClass().getSimpleName() + " - " + e.getMessage()
+                    + " (возможно, ваша Java слишком старая для этого зеркала)";
+            shortDetail = "SSL ошибка";
         } else {
             reasonCode = "IO_ERROR";
             detail = e.getClass().getSimpleName() + " for " + url + ": " + e.getMessage();
+            shortDetail = "ошибка соединения";
         }
 
         Main.LOGGER.warn("[MirrorManager] Probe failed for {}: {} ({} ms)", mirror.id, detail, latency, e);
-        return new ProbeResult(mirror, false, latency, reasonCode, detail);
+        return new ProbeResult(mirror, false, latency, reasonCode, detail, shortDetail, false);
     }
 
     /**
      * Результат автоматического подбора зеркала: лучший найденный вариант
-     * (может быть null, если ни одно рекомендуемое зеркало не ответило)
-     * и полный список проб по всем проверенным зеркалам - для диагностики.
+     * (может быть null) и полный список проб по всем проверенным зеркалам.
      */
     public static class AutoPickResult {
         public final Mirror best;
-        public final java.util.List<ProbeResult> allProbes;
+        public final List<ProbeResult> allProbes;
 
-        AutoPickResult(Mirror best, java.util.List<ProbeResult> allProbes) {
+        AutoPickResult(Mirror best, List<ProbeResult> allProbes) {
             this.best = best;
             this.allProbes = allProbes;
         }
     }
 
     /**
-     * Параллельно проверяет доступность всех рекомендуемых зеркал (GitFlic исключён -
-     * см. Mirror.recommended) и возвращает самое быстрое из доступных. Блокирующий вызов,
-     * использовать только из фонового потока (не из чат/тик-потока).
+     * Параллельно проверяет все рекомендуемые зеркала и возвращает самое быстрое.
+     * Зеркала, доступные только по http:// (insecure), в автовыбор не попадают.
+     * Блокирующий вызов - только из фонового потока.
      */
     public static AutoPickResult pickBestMirror() {
-        java.util.List<Mirror> candidates = new java.util.ArrayList<>();
+        List<Mirror> candidates = new ArrayList<>();
         for (Mirror m : Mirror.values()) {
             if (m.recommended) candidates.add(m);
         }
 
-        java.util.List<CompletableFuture<ProbeResult>> futures = new java.util.ArrayList<>();
+        List<CompletableFuture<ProbeResult>> futures = new ArrayList<>();
         for (Mirror m : candidates) {
             futures.add(CompletableFuture.supplyAsync(() -> probe(m)));
         }
 
-        java.util.List<ProbeResult> results = new java.util.ArrayList<>();
+        List<ProbeResult> results = new ArrayList<>();
         for (CompletableFuture<ProbeResult> f : futures) {
             try {
-                results.add(f.get(5, TimeUnit.SECONDS));
+                results.add(f.get(8, TimeUnit.SECONDS));
             } catch (Exception e) {
                 Main.LOGGER.warn("[MirrorManager] Auto-pick probe future failed: {}: {}",
                         e.getClass().getSimpleName(), e.getMessage());
@@ -308,7 +393,7 @@ public class MirrorManager {
         Mirror best = null;
         long bestLatency = Long.MAX_VALUE;
         for (ProbeResult r : results) {
-            if (r.reachable && r.latencyMs < bestLatency) {
+            if (r.reachable && !r.insecure && r.latencyMs < bestLatency) {
                 best = r.mirror;
                 bestLatency = r.latencyMs;
             }
@@ -317,7 +402,7 @@ public class MirrorManager {
         if (best != null) {
             Main.LOGGER.info("[MirrorManager] Auto-pick selected {} ({} ms)", best.id, bestLatency);
         } else {
-            Main.LOGGER.warn("[MirrorManager] Auto-pick found no reachable recommended mirror");
+            Main.LOGGER.warn("[MirrorManager] Auto-pick found no reachable secure mirror");
         }
 
         return new AutoPickResult(best, results);

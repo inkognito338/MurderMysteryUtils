@@ -3,21 +3,22 @@ package real.inkognito338.murdermysteryutils.commands.impl;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonParser;
 import net.minecraft.client.Minecraft;
-import okhttp3.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import real.inkognito338.murdermysteryutils.commands.CommandSource;
 import real.inkognito338.murdermysteryutils.utils.CertManager;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyStore;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Project: MurderMysteryUtils
@@ -28,26 +29,24 @@ public class CmdSendLang {
 
     private static final Logger LOGGER = LogManager.getLogger("MurderMysteryUtils");
 
+    private static final int HTTP_TIMEOUT_MS = 5_000;
+
     private final Minecraft mc = Minecraft.getMinecraft();
 
     /**
-     * HTTP-клиент для запросов к Google Translate.
-     * Инициализируется с дефолтным JVM SSL (уровень 1).
-     * При SSLHandshakeException пересобирается через CertManager (уровни 1+2+диск).
+     * SSL-фабрика для запросов к Google Translate.
+     * null = дефолтный JVM SSL (уровень 1).
+     * При SSLHandshakeException подменяется фабрикой из CertManager (уровни 1+2+диск).
      */
-    private volatile OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .writeTimeout(5, TimeUnit.SECONDS)
-            .build();
+    private volatile SSLSocketFactory sslFactory = null;
 
     private final JsonParser jsonParser = new JsonParser();
 
-    // ── SSL: пересборка клиента при ошибке ───────────────────────────────────
+    // ── SSL: пересборка фабрики при ошибке ───────────────────────────────────
 
-    private synchronized void rebuildClientWithFreshCerts() {
+    private synchronized void rebuildSslFactoryWithFreshCerts() {
         try {
-            LOGGER.info("[CmdSendLang] SSL error detected, refreshing certs and rebuilding client...");
+            LOGGER.info("[CmdSendLang] SSL error detected, refreshing certs and rebuilding SSL factory...");
 
             CertManager.refreshCerts();
 
@@ -57,18 +56,11 @@ public class CmdSendLang {
                 return;
             }
 
-            TrustManagerFactory tmf = TrustManagerFactory.getInstance(
-                    TrustManagerFactory.getDefaultAlgorithm());
-            tmf.init((KeyStore) null);
-            X509TrustManager tm = (X509TrustManager) tmf.getTrustManagers()[0];
+            sslFactory = ctx.getSocketFactory();
 
-            httpClient = httpClient.newBuilder()
-                    .sslSocketFactory(ctx.getSocketFactory(), tm)
-                    .build();
-
-            LOGGER.info("[CmdSendLang] SSL client rebuilt successfully with fresh certs");
+            LOGGER.info("[CmdSendLang] SSL factory rebuilt successfully with fresh certs");
         } catch (Exception e) {
-            LOGGER.error("[CmdSendLang] Failed to rebuild SSL client: {}", e.getMessage());
+            LOGGER.error("[CmdSendLang] Failed to rebuild SSL factory: {}", e.getMessage());
         }
     }
 
@@ -200,14 +192,12 @@ public class CmdSendLang {
         String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl="
                 + "auto" + "&tl=" + tl + "&dt=t&ie=UTF-8&oe=UTF-8&q=" + encoded;
 
-        Request request = new Request.Builder().url(url).get().build();
-
         try {
-            return executeTranslate(httpClient, request);
+            return executeTranslate(url);
         } catch (SSLHandshakeException e) {
             LOGGER.warn("[CmdSendLang] SSL handshake failed, refreshing certs and retrying: {}", url);
-            rebuildClientWithFreshCerts();
-            return executeTranslate(httpClient, request);
+            rebuildSslFactoryWithFreshCerts();
+            return executeTranslate(url);
         }
     }
 
@@ -226,13 +216,33 @@ public class CmdSendLang {
         }
     }
 
-    private String executeTranslate(OkHttpClient client, Request request) throws IOException {
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) return "";
-            ResponseBody body = response.body();
-            if (body == null) return "";
+    private String executeTranslate(String url) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            SSLSocketFactory factory = sslFactory;
+            if (factory != null && conn instanceof HttpsURLConnection) {
+                ((HttpsURLConnection) conn).setSSLSocketFactory(factory);
+            }
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(HTTP_TIMEOUT_MS);
+            conn.setReadTimeout(HTTP_TIMEOUT_MS);
+            conn.setInstanceFollowRedirects(true);
 
-            String jsonString = body.string();
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return "";
+
+            String jsonString;
+            try (InputStream in = conn.getInputStream()) {
+                if (in == null) return "";
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    out.write(buf, 0, n);
+                }
+                jsonString = new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
+
             JsonArray json  = jsonParser.parse(jsonString).getAsJsonArray();
             JsonArray parts = json.get(0).getAsJsonArray();
 
@@ -243,6 +253,8 @@ public class CmdSendLang {
                 } catch (Exception ignored) {}
             }
             return result.toString().trim();
+        } finally {
+            conn.disconnect();
         }
     }
 

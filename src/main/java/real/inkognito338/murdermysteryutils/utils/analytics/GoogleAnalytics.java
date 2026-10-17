@@ -5,21 +5,24 @@ import com.google.gson.JsonObject;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.common.ForgeVersion;
 import net.minecraftforge.fml.common.Loader;
-import okhttp3.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import real.inkognito338.murdermysteryutils.Main;
 import real.inkognito338.murdermysteryutils.utils.CertManager;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.KeyStore;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Project: MurderMysteryUtils
@@ -47,7 +50,7 @@ public class GoogleAnalytics {
     private static final String USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+    private static final int HTTP_TIMEOUT_MS = 5_000;
 
     private static void debug(String msg, Object... args) {
         if (DEBUG) LOGGER.info(msg, args);
@@ -128,60 +131,75 @@ public class GoogleAnalytics {
      * Возвращает тело ответа (у /mp/collect оно пустое, у /debug/mp/collect - JSON).
      */
     private static String post(String url, String body) throws Exception {
-        Request request = new Request.Builder()
-                .url(url)
-                .header("User-Agent", USER_AGENT) // обязательный User-Agent
-                .post(RequestBody.create(JSON, body))
-                .build();
-
         debug("[Analytics] Отправка через HTTPS: {}", url.substring(0, url.indexOf('?')));
 
-        try (Response response = buildHttpClient(true).newCall(request).execute()) {
-            String text = response.body() != null ? response.body().string() : "";
-            debug("[Analytics] HTTPS ответ: {}", response.code());
-            return text;
+        try {
+            return executePost(url, body, buildSslFactory());
         } catch (Throwable t) {
             LOGGER.warn("[Analytics] HTTPS не удался, пробуем HTTP: {}", t.getMessage());
             debug("[Analytics] Отправка через HTTP...");
-
-            Request httpRequest = request.newBuilder()
-                    .url(url.replace("https://", "http://"))
-                    .build();
-
-            try (Response response = buildHttpClient(false).newCall(httpRequest).execute()) {
-                String text = response.body() != null ? response.body().string() : "";
-                debug("[Analytics] HTTP ответ: {}", response.code());
-                return text;
-            }
+            return executePost(url.replace("https://", "http://"), body, null);
         }
     }
 
-    private static OkHttpClient buildHttpClient(boolean useHttps) {
-        if (useHttps) {
-            try {
-                SSLContext ctx = CertManager.getSSLContext();
-                if (ctx != null) {
-                    TrustManagerFactory tmf = TrustManagerFactory.getInstance(
-                            TrustManagerFactory.getDefaultAlgorithm());
-                    tmf.init((KeyStore) null);
-                    X509TrustManager tm = (X509TrustManager) tmf.getTrustManagers()[0];
-                    debug("[Analytics] HTTPS-клиент создан через CertManager");
-                    return new OkHttpClient.Builder()
-                            .connectTimeout(5, TimeUnit.SECONDS)
-                            .readTimeout(5, TimeUnit.SECONDS)
-                            .sslSocketFactory(ctx.getSocketFactory(), tm)
-                            .build();
-                }
-            } catch (Throwable t) {
-                LOGGER.warn("[Analytics] Не удалось создать HTTPS-клиент: {}", t.getMessage());
+    /**
+     * Один POST-запрос. Возвращает тело ответа независимо от кода (для 4xx/5xx читается errorStream).
+     * Сетевые ошибки пробрасываются наружу.
+     */
+    private static String executePost(String url, String body, SSLSocketFactory factory) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            if (factory != null && conn instanceof HttpsURLConnection) {
+                ((HttpsURLConnection) conn).setSSLSocketFactory(factory);
             }
-        }
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(HTTP_TIMEOUT_MS);
+            conn.setReadTimeout(HTTP_TIMEOUT_MS);
+            conn.setInstanceFollowRedirects(true);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("User-Agent", USER_AGENT); // обязательный User-Agent
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
 
-        debug("[Analytics] Используем дефолтный HTTP-клиент");
-        return new OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.SECONDS)
-                .build();
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(payload);
+            }
+
+            int code = conn.getResponseCode();
+            debug("[Analytics] Ответ: {}", code);
+
+            InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            if (in == null) return "";
+            try (InputStream stream = in) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = stream.read(buf)) != -1) {
+                    out.write(buf, 0, n);
+                }
+                return new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    /**
+     * SSLSocketFactory из CertManager или null (дефолтный JVM SSL).
+     */
+    private static SSLSocketFactory buildSslFactory() {
+        try {
+            SSLContext ctx = CertManager.getSSLContext();
+            if (ctx != null) {
+                debug("[Analytics] HTTPS через CertManager");
+                return ctx.getSocketFactory();
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[Analytics] Не удалось создать SSL-фабрику: {}", t.getMessage());
+        }
+        debug("[Analytics] Используем дефолтный JVM SSL");
+        return null;
     }
 
     /**
