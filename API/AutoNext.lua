@@ -71,17 +71,24 @@ function detectAutoNextStateFull(message, source, playerName, teamName, prefix, 
     local defaultCommand = isJenroServer(serverIP) and "/random-arena" or "/next"
     debugLog("defaultCommand: " .. defaultCommand)
 
+    local GAME_END_MESSAGES = {
+        "MurderMystery ▸ Перезагрузка сервера через 10 секунд!",
+        "MurderMystery ▸ Server restarting in 10 seconds!",
+    }
+
     if source == "chat" and isYukiServer(serverIP) then
-        if text:find("MurderMystery ▸ Перезагрузка сервера через 10 секунд!", 1, true) then
-            debugLog("GAME_END detected in CHAT!")
-            return { state = "GAME_END", command = defaultCommand, autoConfirm = false }
+        for _, msg in ipairs(GAME_END_MESSAGES) do
+            if text:find(msg, 1, true) then
+                debugLog("GAME_END detected in CHAT!")
+                return { state = "GAME_END", command = defaultCommand, autoConfirm = false }
+            end
         end
     end
 
-    if source == "chat" and isYukiServer(serverIP) then
-        if text:find("MurderMystery ▸ Server restarting in 10 seconds!", 1, true) then
-            debugLog("GAME_END detected in CHAT!")
-            return { state = "GAME_END", command = defaultCommand, autoConfirm = false }
+    if source == "title" and isYukiServer(serverIP) then
+        if text:find("ВЫ ПОГИБЛИ!", 1, true) or text:find("YOU DIED!", 1, true) then
+            debugLog("DEATH detected in TITLE on YUKI server!")
+            return { state = "DEATH", command = "/next", autoConfirm = true}
         end
     end
 

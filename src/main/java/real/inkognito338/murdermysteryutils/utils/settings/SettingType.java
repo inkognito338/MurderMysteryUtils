@@ -16,5 +16,6 @@ public enum SettingType {
     // Новые типы для LocalAPI
     SCRIPT_LIST,      // Список скриптов с переключателями
     SCRIPT_BUTTON,    // Кнопка для действия со скриптом
-    SCRIPT_FOLDER     // Кнопка открытия папки
+    SCRIPT_FOLDER,     // Кнопка открытия папки
+    OPEN_FOLDER
 }

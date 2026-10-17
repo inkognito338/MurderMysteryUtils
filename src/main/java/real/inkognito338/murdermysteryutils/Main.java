@@ -35,7 +35,7 @@ public class Main {
     public static final Logger LOGGER = LogManager.getLogger("MurderMysteryUtils");
     public static final String MODID = "murdermysteryutils";
     public static final String NAME = "MurderMysteryUtils";
-    public static final String VERSION = "3.1";
+    public static final String VERSION = "3.1.1";
     public static final String SOURCE_URL = "https://github.com/inkognito338/MurderMysteryUtils";
     public static final String ISSUES_URL = "https://github.com/inkognito338/MurderMysteryUtils/issues";
 

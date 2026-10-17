@@ -19,6 +19,7 @@ import real.inkognito338.murdermysteryutils.utils.settings.SettingType;
 import real.inkognito338.murdermysteryutils.modules.HUD;
 
 import java.awt.*;
+import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.List;
@@ -485,6 +486,9 @@ public class SettingsGUI extends GuiScreen {
                         case TAB_ANIMATION:
                             drawTabAnimationButton(s, sx, (int) cy, sw, mouseX, mouseY);
                             break;
+                        case OPEN_FOLDER:
+                            drawFolderButton(s, sx, (int) cy, sw, mouseX, mouseY);
+                            break;
                     }
                 }
                 if (getExtraRowHeight(s) > 0) {
@@ -522,6 +526,27 @@ public class SettingsGUI extends GuiScreen {
         if (colorPicker.isVisible()) {
             colorPicker.draw(mouseX, mouseY);
         }
+    }
+
+    private void drawFolderButton(Setting s, int sx, int cy, int sw, int mouseX, int mouseY) {
+        drawSettingBackground(sx, cy, sw, 28, mouseX, mouseY);
+        mc.fontRenderer.drawString(s.getName(), sx + 8, cy + 8, ThemeManager.getTextSecondary());
+
+        String label = "Open Folder";
+        int btnW = mc.fontRenderer.getStringWidth(label) + 24;
+        int btnX = sx + sw - btnW - 8;
+        int btnY = cy + 4;
+        int btnH = 20;
+
+        boolean hover = isHovered(mouseX, mouseY, btnX, btnY, btnW, btnH);
+        RenderUtils.drawRoundedRect(btnX, btnY, btnX + btnW, btnY + btnH, 4,
+                hover ? ThemeManager.getAccentDark() : ThemeManager.getElementBg());
+        RenderUtils.drawRoundedRectOutline(btnX, btnY, btnX + btnW, btnY + btnH, 4,
+                ThemeManager.getAccent(), 1f);
+        mc.fontRenderer.drawString(label,
+                btnX + (btnW - mc.fontRenderer.getStringWidth(label)) / 2,
+                btnY + 5,
+                hover ? 0xFFFFFF : ThemeManager.getTextPrimary());
     }
 
     // ============================================================
@@ -1509,6 +1534,24 @@ public class SettingsGUI extends GuiScreen {
                                 return;
                             }
                             break;
+                        case OPEN_FOLDER: {
+                            String folderLabel = "Open Folder";
+                            int folderBtnW = mc.fontRenderer.getStringWidth(folderLabel) + 24;
+                            int folderBtnX = sx + sw - folderBtnW - 8;
+                            int folderBtnY = (int) cy + 4;
+                            int folderBtnH = 20;
+                            if (isHovered(mouseX, mouseY, folderBtnX, folderBtnY, folderBtnW, folderBtnH)) {
+                                try {
+                                    File dir = new File((String) s.getValue());
+                                    if (!dir.exists()) dir.mkdirs();
+                                    if (java.awt.Desktop.isDesktopSupported()) {
+                                        java.awt.Desktop.getDesktop().open(dir);
+                                    }
+                                } catch (Exception ignored) {}
+                                return;
+                            }
+                            break;
+                        }
                         case TEXT:
                             int resetBtnW = 16, resetBtnH = 16;
                             int resetBtnX = sx + sw - resetBtnW - 4;

@@ -41,7 +41,7 @@ import static real.inkognito338.murdermysteryutils.Main.*;
 public class DiscordRPC {
 
     /** true = писать в лог все ответы Discord (для отладки). */
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
 
     private static final String APP_ID = "1514186924791824494";
     private static final String BUTTON_LABEL = "GitHub";

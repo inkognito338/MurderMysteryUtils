@@ -33,19 +33,25 @@ public class UpdateChecker {
 
     // ================= Вызывается из API после завершения загрузки =================
 
+    private static final AtomicBoolean connected = new AtomicBoolean(false);
     /**
      * Вызывается из API.init() / API.reloadFromCurrentMirror() после того, как
      * обе загрузки завершились. Ставит нужные уведомления в очередь Main —
      * тик доставит их игроку, когда mc.player станет доступен.
      */
     public static void onInitLoadFinished() {
-        if (API.isMirrorLoadFailed() && mirrorNotified.compareAndSet(false, true)) {
-            Main.enqueueMessage(buildMirrorFailedNotice());
+        // В главном меню ничего не ставим в очередь: уведомления отправит onServerConnect.
+        if (connected.get()) {
+            if (API.isMirrorLoadFailed() && mirrorNotified.compareAndSet(false, true)) {
+                Main.enqueueMessage(buildMirrorFailedNotice());
+            }
+            if (API.isUpdateScriptLoaded()) {
+                enqueueUpdateNotice();
+            }
         }
 
         if (API.isUpdateScriptLoaded()) {
             checkStaticState();
-            enqueueUpdateNotice();
         }
 
         Main.refreshUpdateState();
@@ -204,9 +210,8 @@ public class UpdateChecker {
 
         @SubscribeEvent
         public void onServerConnect(FMLNetworkEvent.ClientConnectedToServerEvent event) {
-            // Сбрасываем флаги уведомлений при каждом новом подключении к серверу,
-            // чтобы уведомление об обновлении/недоступности зеркала отправлялось заново.
             resetNotifyFlags();
+            connected.set(true);
 
             if (API.isMirrorLoadFailed() && mirrorNotified.compareAndSet(false, true)) {
                 Main.enqueueMessage(buildMirrorFailedNotice());
@@ -215,6 +220,11 @@ public class UpdateChecker {
             if (API.isUpdateScriptLoaded()) {
                 enqueueUpdateNotice();
             }
+        }
+
+        @SubscribeEvent
+        public void onServerDisconnect(FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
+            connected.set(false);
         }
 
         @SubscribeEvent

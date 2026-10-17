@@ -2,8 +2,8 @@
 
 -- Конфигурация обновлений
 local updaterConfig = {
-    latest_version = "3.1",
-    recommended_version = "3.1",
+    latest_version = "3.1.1",
+    recommended_version = "3.1.1",
     download_url = "https://github.com/inkognito338/MurderMysteryUtils/releases/latest"
 }
 

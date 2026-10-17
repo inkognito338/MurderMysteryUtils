@@ -43,6 +43,8 @@ public class ChatLogger extends Module {
     private final Setting logSent     = new Setting("Log Sent",     SettingType.BOOLEAN, true);
     private final Setting logParty    = new Setting("Log Party",    SettingType.BOOLEAN, true);
     private final Setting splitByNick = new Setting("Split By Nickname", SettingType.BOOLEAN, false);
+    private final Setting openFolder = new Setting("Log Folder", SettingType.OPEN_FOLDER,
+            new File(mc.mcDataDir, "MurderMysteryUtils/ChatLogger").getAbsolutePath());
 
     public ChatLogger() {
         super("ChatLogger");
@@ -53,6 +55,7 @@ public class ChatLogger extends Module {
         addSetting(logSent);
         addSetting(logParty);
         addSetting(splitByNick);
+        addSetting(openFolder);
     }
 
     @Override
