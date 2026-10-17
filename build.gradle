@@ -95,7 +95,11 @@ processResources.dependsOn downloadCerts
 compileJava.dependsOn downloadCerts
 
 configurations {
-    embed
+    embed {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-common'
+    }
     implementation.extendsFrom(embed)
 }
 
@@ -112,9 +116,10 @@ dependencies {
     embed('com.squareup.okhttp3:okhttp:4.12.0')
 
     embed 'org.jetbrains.kotlin:kotlin-stdlib:2.2.21'
-//    embed('com.github.MinnDevelopment:java-discord-rpc:v2.0.1')
+//    embed 'club.minnced:java-discord-rpc:2.0.2'
+//    compileOnly 'club.minnced:java-discord-rpc:2.0.2'
 //    embed('com.github.JnCrMx:discord-game-sdk4j:v0.5.4')
-    embed('io.github.CDAGaming:DiscordIPC:0.10.2')
+//    embed('io.github.CDAGaming:DiscordIPC:0.10.2')
     embed('org.mozilla:rhino:1.7.15.1')
 
     // Source: https://mvnrepository.com/artifact/org.luaj/luaj-jse
@@ -142,6 +147,28 @@ jar {
         exclude 'LICENSE.txt'
         exclude '**/module-info.class'
         exclude 'META-INF/versions/**'
+        exclude '**/*.kotlin_builtins'
+        exclude '**/*.kotlin_metadata'
+        exclude 'META-INF/*.kotlin_module'
+        exclude 'DebugProbesKt.bin'
+        exclude 'META-INF/LICENSE*'
+        exclude 'META-INF/NOTICE*'
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/proguard/**'
+        exclude '**/package-info.class'
+        exclude 'org/mozilla/javascript/tools/**'
+        exclude 'org/mozilla/javascript/xml/impl/xmlbeans/**'
+        exclude 'org/mozilla/javascript/resources/Messages_*.properties'
+        exclude 'org/luaj/vm2/luajc/**'      // компиляция Lua в байткод
+        exclude 'org/luaj/vm2/script/**'     // javax.script
+        exclude 'org/luaj/vm2/ast/**'        // парсер для luajc
+        exclude 'org/luaj/vm2/parser/**'     // парсер для luajc
+        exclude 'org/luaj/vm2/lib/jse/**'    // JsePlatform, io/os, luajava
+        exclude 'org/spongepowered/tools/**'
+        exclude 'META-INF/services/javax.annotation.processing.Processor'
+        exclude 'org/mozilla/javascript/optimizer/**'   // компилятор в байткод
+        exclude 'org/mozilla/javascript/commonjs/**'    // require(), модульная система
+        exclude 'org/mozilla/javascript/serialize/**'   // сериализация скоупов
     }
 
     from(projectDir) {
@@ -181,6 +208,31 @@ publishing {
     repositories {
         maven {
             url "file:///${project.projectDir}/mcmodsrepo"
+        }
+    }
+}
+
+tasks.register('embedSizes') {
+    doLast {
+        configurations.embed.resolvedConfiguration.resolvedArtifacts
+                .sort { -it.file.length() }
+                .each { println "${(it.file.length() / 1024) as int} KB  ${it.moduleVersion.id}" }
+    }
+}
+
+tasks.register('embedUsage') {
+    doLast {
+        def text = fileTree('src/main/java').files.collect { it.text }.join('\n')
+        configurations.embed.resolvedConfiguration.resolvedArtifacts.each { a ->
+            def pkgs = [] as Set
+            zipTree(a.file).matching { include '**/*.class'; exclude 'META-INF/**' }.visit { d ->
+                if (!d.isDirectory()) {
+                    def p = d.relativePath.parent.pathString.replace('/', '.')
+                    if (p) pkgs << p
+                }
+            }
+            def used = pkgs.any { text.contains(it) }
+            println "${used ? 'IMPORTED    ' : 'NOT IMPORTED'}  ${a.moduleVersion.id}"
         }
     }
 }
