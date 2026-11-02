@@ -1,18 +1,14 @@
 -- tags.lua
 -- Всё сравнивается в нижнем регистре.
--- Тег показывается, только если адрес сервера оканчивается на один из доменов правила.
+-- Тег показывается, только если адрес сервера содержит одно из ключевых слов правила.
 
-local COMMON_DOMAINS = {
-    "dexland.org",
-    "dexland.net",
-    "masedworld.net",
-    "masedworld.ru",
-    "cheatmine.net",
-    "cheatmine.ru",
-    "mineberry.org",
-    "mineberry.net",
-    "minepeak.org",
-    "minepeak.net",
+local COMMON_KEYWORDS = {
+    "dexland",
+    "masedworld",
+    "mineblaze",
+    "cheatmine",
+    "mineberry",
+    "minepeak",
 }
 
 local function concat(a, b)
@@ -24,15 +20,20 @@ end
 
 local RULES = {
     {
-        nicks   = { "48799464" },
-        domains = COMMON_DOMAINS,
-        tag     = "§6[MMUtils Author]",
+        nicks    = { "48799444" },
+        keywords = COMMON_KEYWORDS,
+        tag      = "§a[MMUtils Author]",
     },
     {
-        nicks   = { "inkognito338", "skv_inkognito338" },
-        domains = concat(COMMON_DOMAINS, { "ultramc.top" }),
-        tag     = "§a[MMUtils Author]",
+        nicks    = { "inkognito338", "skv_inkognito338" },
+        keywords = concat(COMMON_KEYWORDS, { "ultramc" }),
+        tag      = "§a[MMUtils Author]",
     },
+    {
+        nicks    = { "wxrrior", "onikoe" },
+        keywords = concat(COMMON_KEYWORDS),
+        tag      = "§7[Clown]",
+    }
 }
 
 local function normalize(s)
@@ -47,17 +48,15 @@ local function normalizeHost(server)
     return host
 end
 
--- host == domain или host оканчивается на ".domain"
-local function hostMatches(host, domain)
-    if host == domain then return true end
-    local suffix = "." .. domain
-    return #host > #suffix and host:sub(-#suffix) == suffix
+-- ключевое слово встречается в хосте (plain-поиск, без паттернов)
+local function hostMatches(host, keyword)
+    return host:find(keyword, 1, true) ~= nil
 end
 
 local function ruleAllowsHost(rule, host)
     if host == "" then return false end
-    for _, domain in ipairs(rule.domains) do
-        if hostMatches(host, domain) then
+    for _, keyword in ipairs(rule.keywords) do
+        if hostMatches(host, keyword) then
             return true
         end
     end
