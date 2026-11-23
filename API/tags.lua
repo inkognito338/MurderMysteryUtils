@@ -13,8 +13,8 @@ local COMMON_KEYWORDS = {
 
 local function concat(a, b)
     local out = {}
-    for _, v in ipairs(a) do out[#out + 1] = v end
-    for _, v in ipairs(b) do out[#out + 1] = v end
+    for _, v in ipairs(a or {}) do out[#out + 1] = v end
+    for _, v in ipairs(b or {}) do out[#out + 1] = v end
     return out
 end
 
@@ -31,7 +31,7 @@ local RULES = {
     },
     {
         nicks    = { "wxrrior", "onikoe" },
-        keywords = concat(COMMON_KEYWORDS),
+        keywords = COMMON_KEYWORDS,
         tag      = "§7[Clown]",
     }
 }
@@ -55,7 +55,7 @@ end
 
 local function ruleAllowsHost(rule, host)
     if host == "" then return false end
-    for _, keyword in ipairs(rule.keywords) do
+    for _, keyword in ipairs(rule.keywords or {}) do
         if hostMatches(host, keyword) then
             return true
         end
@@ -71,8 +71,8 @@ function getNickTag(nick, server)
 
     for _, rule in ipairs(RULES) do
         if ruleAllowsHost(rule, host) then
-            for _, ruleNick in ipairs(rule.nicks) do
-                if ruleNick == n then
+            for _, ruleNick in ipairs(rule.nicks or {}) do
+                if normalize(ruleNick) == n then
                     return rule.tag
                 end
             end
@@ -87,8 +87,8 @@ function getNickTagsForServer(server)
     local out = {}
     for _, rule in ipairs(RULES) do
         if ruleAllowsHost(rule, host) then
-            for _, ruleNick in ipairs(rule.nicks) do
-                out[ruleNick] = rule.tag
+            for _, ruleNick in ipairs(rule.nicks or {}) do
+                out[normalize(ruleNick)] = rule.tag
             end
         end
     end
