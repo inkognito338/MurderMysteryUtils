@@ -33,7 +33,7 @@ local RULES = {
         nicks    = { "wxrrior", "onikoe" },
         keywords = COMMON_KEYWORDS,
         tag      = "§7[Clown]",
-    }
+    },
 }
 
 local function normalize(s)
